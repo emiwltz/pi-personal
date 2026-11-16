@@ -1,0 +1,25 @@
+{
+  "name": "pi-personal",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Personal agents that live on your own machine: one continuous pi session per agent, kept alive in Herdr Core, reachable from any channel through a port of plain files.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/emiwltz/pi-personal.git"
+  },
+  "homepage": "https://github.com/emiwltz/pi-personal#readme",
+  "type": "module",
+  "bin": {
+    "pi-personal": "core/cli.ts"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "test": "node --test --test-concurrency=1 test/*.test.ts"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "1.5.2"
+  }
+}
