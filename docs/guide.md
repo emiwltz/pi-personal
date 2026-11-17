@@ -25,15 +25,14 @@ You do not need pi installed: Pi-personal pins its own copy, separate from any p
 
 ## `pp setup`
 
-Five steps. Run it again at any time: what is done is kept, and only the optional steps are asked again.
+Four steps. Run it again at any time: what is done is kept, and only the optional steps are asked again. Pi-personal adds only what is its own (Herdr Core, the agent, its channels); the model and the sign-in are pi's, done in pi's own screen, as in pi.
 
-1. **This machine.** Finds Herdr Core (the `hc` command), checks it is recent enough, and starts it. Without Herdr Core, it offers to install it with Herdr's own installer (into `~/.local/bin`). On Linux, it tells you if logging out would stop your programs, and the one command that prevents it.
-2. **A model provider.** Exactly the choices pi's own `/login` offers: sign in with an account (a subscription, in your browser) or use an API key, then the provider. Credentials already on the machine are offered first, each on a yes: an API key in an environment variable of this terminal (saved for your agents, since they do not run in this terminal), or an API key in your own pi (copied; your pi is not changed). Account sign-ins are not copied from your own pi: two programs sharing one sign-in can log each other out, so you sign in again.
-3. **Your agent.** The model (pi's list for your providers, pi's default first) and a name (`main` by default). It creates `~/pi-personal/<name>`.
-4. **Start it.** The agent starts in Herdr Core and says hello. It runs in the background: closing the terminal does not stop it.
-5. **Reach it from anywhere.** Each channel that ships with Pi-personal (today: Telegram) offers its own short setup: for Telegram, a bot's token, then you write to the bot and say yes to let yourself in (only someone writing at that moment is offered, with their Telegram id). Then the login service, which brings your agent back by itself if it stops (checked at login and every 5 minutes, while Herdr Core runs).
+1. **This machine.** Finds Herdr Core (the `hc` command): one already there is used as it is (checked recent enough, and started); without one, it offers to install it with Herdr's own installer (into `~/.local/bin`). On Linux, it tells you if logging out would stop your programs, and the one command that prevents it.
+2. **A model, with pi.** pi's own screen opens here, with Pi-personal's own pi settings (its sign-ins are shared by all your agents; your own pi is not touched). In it, as always in pi: `/login` connects a provider (an account, such as a subscription, or an API key), `/model` chooses the model (`Ctrl+S` there keeps it as pi's default), `/quit` comes back to the guide. Already connected, pi is opened only if you ask.
+3. **Your agent.** A name (`main` by default) and the model pi keeps as its default (otherwise pi's own first choice for your provider), written in its `pi-personal.json`: an agent keeps its model when pi's default changes later. It creates `~/pi-personal/<name>`, starts the agent in Herdr Core, and the agent says hello: its first real request. If the provider refuses the key or the sign-in, the guide says so and opens pi again for `/login`. The agent runs in the background: closing the terminal does not stop it.
+4. **Reach it from anywhere.** Each channel that ships with Pi-personal (today: Telegram) offers its own short setup: for Telegram, a bot's token (paste the token, or BotFather's whole message), then you write to the bot and say yes to let yourself in (only someone writing at that moment is offered, with their Telegram id). Then the login service, which brings your agent back by itself if it stops (checked at login and every 5 minutes, while Herdr Core runs).
 
-`pp login` alone offers the same choices as step 2, at any time; `pp login <provider> [--api-key]` goes straight to pi's sign-in.
+`pp login` opens pi's screen again, for `/login` (and `/model`), at any time; `pp login <provider> [--api-key]` is pi's command-line sign-in.
 
 ## Talk to it
 
@@ -93,6 +92,7 @@ Your agent is pi: it loads pi's extensions from its folder's `.pi/extensions/`, 
 - `pp status` gives the details: state, last error, last restart and why, safe mode, each channel.
 - `pp log` is the keeper's log: every start, exit and restart, and why.
 - `pp doctor` checks the installation and every agent, one line each: `ok`, `note`, or `FAIL` with what to do.
+- "… refused the credentials": the provider does not accept the key or the sign-in (wrong, revoked or expired). `pp login` enters new ones; a running agent uses them from its next message, no restart needed.
 - `pp follow` prints everything the agent says and does, as it happens.
 
 The agent comes back by itself after a crash, and continues the work that was cut off. After repeated failures it stops trying, says why, and tries again every hour; `pp restart` tries now.
@@ -122,7 +122,7 @@ Copy a visible folder to another machine and run `pp init <name> <folder> --mode
 ## By hand, without the guide
 
 ```sh
-pp login                                          # or: pp login <provider> [--api-key]
+pp login                                          # pi's screen: /login, then /quit (or: pp login <provider> [--api-key])
 pp models                                         # the ids you can use
 pp init main --model <provider>/<model-id>        # creates ~/pi-personal/main
 pp start main

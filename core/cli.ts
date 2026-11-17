@@ -30,7 +30,7 @@ Manage
   start [agent] | --all           start it and its channels
   stop [agent] | --all            stop it (--all: every agent, then Herdr Core unless it runs other programs)
   restart [agent]                 stop and start again (also leaves safe mode)
-  login [provider]                connect a model provider, shared by all agents
+  login [provider]                alone: pi's screen (/login, /model); with a provider: its sign-in (--api-key)
   models [search]                 the models you can use
   channel add|remove [agent] <channel>
                                   turn a channel on or off (Telegram ships with ${PRODUCT})
@@ -172,33 +172,6 @@ function show(e: port.PortEvent): string {
 			return `${t} ${who}${type} ${Object.keys(rest).length ? JSON.stringify(rest) : ""}`.trimEnd();
 		}
 	}
-}
-
-/** Read one line from the terminal without showing it. */
-function askHidden(prompt: string): Promise<string> {
-	return new Promise((resolve) => {
-		process.stdout.write(prompt);
-		const stdin = process.stdin;
-		stdin.setRawMode(true);
-		stdin.resume();
-		let value = "";
-		const done = () => {
-			stdin.setRawMode(false);
-			stdin.pause();
-			stdin.off("data", onData);
-			process.stdout.write("\n");
-			resolve(value);
-		};
-		const onData = (buf: Buffer) => {
-			for (const ch of buf.toString("utf8")) {
-				if (ch === "\r" || ch === "\n") return done();
-				if (ch === "\u0003") process.exit(130); // Ctrl+C
-				if (ch === "\u007f") value = value.slice(0, -1);
-				else if (ch >= " ") value += ch;
-			}
-		};
-		stdin.on("data", onData);
-	});
 }
 
 async function send(name: string, text: string, opt: Record<string, string | true>): Promise<number> {
@@ -531,16 +504,15 @@ async function main(argv: string[]): Promise<number> {
 			return 0;
 		}
 		case "login": {
-			// Everything after "login" goes to pi as it is (the provider, --api-key, --no-browser...). Without a
-			// provider, the same choices as pi's own /login.
+			// Alone: pi's own screen, for /login. With a provider: pi's command-line sign-in, given everything after "login".
 			const args = argv.slice(argv.indexOf("login") + 1).filter((x, i, all) => x !== "--home" && all[i - 1] !== "--home" && !x.startsWith("--home="));
+			const providers = await import("./providers.ts");
 			if (!args.length) {
-				if (!process.stdin.isTTY) throw new UsageError(`usage: ${COMMAND} login <provider> [--api-key] [--no-browser]. ${PROVIDERS()}`);
-				const { connect } = await import("./welcome.ts");
-				return (await connect()) ? 0 : 1;
+				if (!process.stdin.isTTY) throw new UsageError(`usage: ${COMMAND} login (opens pi: /login there), or ${COMMAND} login <provider> [--api-key] [--no-browser]. ${PROVIDERS()}`);
+				console.log("pi opens: /login connects a provider, /model chooses the model (Ctrl+S keeps it as the default), /quit comes back.");
+				return providers.openPi();
 			}
-			privateDir(piDir());
-			return spawnSync(process.execPath, [piCli(), "auth", "login", ...args], { stdio: "inherit", env: { ...process.env, PI_CODING_AGENT_DIR: piDir() } }).status ?? 1;
+			return providers.login(args);
 		}
 		case "pi": {
 			// Pi-personal's pinned pi, with the settings folder all agents share (packages, MCP servers, models, sign-ins).
@@ -566,7 +538,7 @@ async function main(argv: string[]): Promise<number> {
 			const agent = agents.loadRecord(name);
 			const key = need(words[0], "secret name");
 			if (!/^[A-Za-z0-9._-]+$/.test(key)) throw new UsageError("secret names use A-Z a-z 0-9 . _ -");
-			const value = (process.stdin.isTTY ? await askHidden(`Paste the value for ${key} (it is not shown), then press Enter: `) : fs.readFileSync(0, "utf8")).trim();
+			const value = (process.stdin.isTTY ? await (await import("./ask.ts")).secret(`The value for ${key}`) : fs.readFileSync(0, "utf8")).trim();
 			if (!value) throw new UsageError("nothing was given");
 			privateDir(agent.paths.secrets);
 			fs.writeFileSync(path.join(agent.paths.secrets, key), `${value}\n`, { mode: 0o600 });

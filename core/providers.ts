@@ -1,6 +1,6 @@
-// Model providers, the way pi offers them: pi's own list (its ids, names and sign-in methods, in pi's order), pi's own
-// sign-in (`pi auth login`), pi's own credentials file (auth.json in Pi-personal's pi directory, shared by all agents).
-// Nothing here prints a secret: credentials found elsewhere are listed by provider and kind only, and copied only on yes.
+// Models and sign-ins are pi's: pi's own screen does them (/login connects a provider, with an account or an API key;
+// /model chooses the model), with Pi-personal's pi directory, shared by all agents. Pi-personal only reads what pi
+// stored: which providers pi lists models for, and the model pi keeps as its default. Nothing here prints a secret.
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import * as fs from "node:fs";
@@ -42,16 +42,6 @@ export async function providers(): Promise<Provider[]> {
 		.sort((a, b) => (first[a.id] ?? 2) - (first[b.id] ?? 2) || a.name.localeCompare(b.name));
 }
 
-/** The environment variables set for a provider (names only; their values are never read here). */
-export async function envKeys(id: string, env: NodeJS.ProcessEnv = process.env): Promise<string[]> {
-	try {
-		const { findEnvKeys } = await piModule("@earendil-works/pi-ai/compat", "pi-ai/dist/compat.js");
-		return (findEnvKeys(id, env) as string[] | undefined) ?? [];
-	} catch {
-		return [];
-	}
-}
-
 /** pi's default model for a provider (what pi itself starts with), if pi names one. */
 export async function defaultModel(id: string): Promise<string | undefined> {
 	try {
@@ -64,7 +54,7 @@ export async function defaultModel(id: string): Promise<string | undefined> {
 
 const ourAuth = () => path.join(piDir(), "auth.json");
 
-/** Which providers a credentials file holds, and of which kind: ids and kinds only. */
+/** Which providers Pi-personal's pi holds credentials for, and of which kind: ids and kinds only. */
 export function stored(file = ourAuth()): Record<string, Kind> {
 	let data: unknown;
 	try {
@@ -76,14 +66,6 @@ export function stored(file = ourAuth()): Record<string, Kind> {
 	if (data && typeof data === "object")
 		for (const [id, v] of Object.entries(data as Record<string, any>)) if (v?.type === "api_key" || v?.type === "oauth") out[id] = v.type;
 	return out;
-}
-
-/** The credentials file of the user's own pi, if there is one (never Pi-personal's). */
-export function userPiAuth(env: NodeJS.ProcessEnv = process.env): string | undefined {
-	const dir = env.PI_CODING_AGENT_DIR ? env.PI_CODING_AGENT_DIR.replace(/^~(?=$|\/)/, os.homedir()) : path.join(os.homedir(), ".pi", "agent");
-	const file = path.join(dir, "auth.json");
-	if (path.resolve(dir) === path.resolve(piDir()) || !fs.existsSync(file)) return undefined;
-	return file;
 }
 
 /** Change Pi-personal's credentials file under pi's own lock, keeping it readable by its owner only. */
@@ -112,24 +94,6 @@ async function editAuth(change: (data: Record<string, unknown>) => void): Promis
 	}
 }
 
-/** Copy one provider's API key from another credentials file (the user's own pi). Account sign-ins are not copied. */
-export async function copyKey(from: string, id: string): Promise<void> {
-	const entry = (JSON.parse(fs.readFileSync(from, "utf8")) as Record<string, any>)[id];
-	if (entry?.type !== "api_key") throw new Error(`${id} in ${from} is not an API key`);
-	await editAuth((d) => {
-		d[id] = entry;
-	});
-}
-
-/** Save the API key found in an environment variable, so agents get it whatever environment they start in. */
-export async function saveEnvKey(id: string, variable: string, env: NodeJS.ProcessEnv = process.env): Promise<void> {
-	const key = env[variable];
-	if (!key) throw new Error(`${variable} is not set`);
-	await editAuth((d) => {
-		d[id] = { type: "api_key", key };
-	});
-}
-
 const piEnv = () => ({ ...process.env, PI_CODING_AGENT_DIR: piDir() });
 /** pi's environment with only what is not a credential (an allow-list: cloud credentials come in many names): what
  * agents can count on, whatever environment they start in. */
@@ -138,22 +102,43 @@ function storedOnly(): NodeJS.ProcessEnv {
 	return Object.fromEntries(Object.entries(piEnv()).filter(([k]) => keep.test(k)));
 }
 
-/** pi's own sign-in, in this terminal: a browser or a code for an account, or a hidden prompt for an API key. */
-export function login(id: string, apiKey: boolean): boolean {
+/** pi's own screen, in this terminal, with Pi-personal's pi directory: /login and /model there, /quit to come back.
+ * Without a session (nothing to keep), in the private area (no project files around), with only what agents get from
+ * the environment (a key in this terminal's environment would not reach them), plus what its screen and a browser
+ * sign-in need. The exit code of pi. */
+export function openPi(): number {
 	privateDir(piDir());
-	const r = spawnSync(process.execPath, [piCli(), "auth", "login", id, ...(apiKey ? ["--api-key"] : [])], { stdio: "inherit", env: piEnv() });
-	return r.status === 0;
+	return spawnSync(process.execPath, [piCli(), "--no-session"], { stdio: "inherit", cwd: piDir(), env: { ...storedOnly(), ...screenEnv() } }).status ?? 1;
+}
+const screenEnv = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(COLORTERM|TERM_PROGRAM|TERM_PROGRAM_VERSION|KITTY_WINDOW_ID|WT_SESSION|DISPLAY|WAYLAND_DISPLAY|XAUTHORITY|DBUS_SESSION_BUS_ADDRESS|BROWSER)$/.test(k)));
+
+/** pi's command-line sign-in (`pi auth login <provider> [--api-key] [--no-browser]`), for scripts and people who know
+ * their provider. A terminal left in bracketed-paste mode (by another program) wraps a paste in marks, which pi's hidden
+ * prompt drops, or keeps in the key: plain pastes for it, and the key cleaned after. */
+export async function login(args: string[]): Promise<number> {
+	privateDir(piDir());
+	if (process.stdout.isTTY) process.stdout.write("\x1b[?2004l");
+	const r = spawnSync(process.execPath, [piCli(), "auth", "login", ...args], { stdio: "inherit", env: piEnv() });
+	const id = args.find((x) => !x.startsWith("-"));
+	if (r.status === 0 && id && args.includes("--api-key") && !(await tidyKey(id))) {
+		console.error(`no key received for ${id}: paste it, then Enter`);
+		return 1;
+	}
+	return r.status ?? 1;
 }
 
-/** Whether pi can use a provider now, with what Pi-personal stored (environment variables do not count: agents may not get them). */
-export function check(id: string): "ready" | "not_ready" | "invalid" {
-	const r = spawnSync(process.execPath, [piCli(), "auth", "check", "--provider", id, "--json"], { encoding: "utf8", env: storedOnly(), timeout: 60_000 });
-	try {
-		const s = JSON.parse(r.stdout.trim().split("\n").pop() ?? "").status;
-		return s === "ready" || s === "invalid" ? s : "not_ready";
-	} catch {
-		return "not_ready";
-	}
+/** The API key just stored for a provider, cleaned of what a terminal adds around a paste (spaces, line ends, paste
+ * marks). False when there is no key left: nothing was pasted. */
+export async function tidyKey(id: string): Promise<boolean> {
+	if (stored()[id] !== "api_key") return false;
+	let left = false;
+	await editAuth((d) => {
+		const e = d[id] as { key?: unknown } | undefined;
+		if (typeof e?.key !== "string") return;
+		e.key = e.key.replace(/\x1b?\[20[01]~/g, "").trim();
+		left = e.key !== "";
+	});
+	return left;
 }
 
 /** The providers agents can use now: those pi lists models for. */
@@ -176,4 +161,19 @@ export function models(search?: string): Model[] {
 		.slice(head + 1)
 		.filter((c) => c.length >= 2 && c[0] && c[1])
 		.map((c) => ({ provider: c[0], id: c[1], context: c[2], thinking: c[4] === "yes" }));
+}
+
+/** The model pi keeps as its default (chosen in pi with /model, then Ctrl+S), if its provider is connected; otherwise
+ * what pi itself starts with for the first connected provider: pi's default for it, or the first model pi lists. */
+export async function chosenModel(): Promise<string | undefined> {
+	const list = models();
+	let s: { defaultProvider?: unknown; defaultModel?: unknown } = {};
+	try {
+		s = JSON.parse(fs.readFileSync(path.join(piDir(), "settings.json"), "utf8")) ?? {};
+	} catch {}
+	if (list.some((m) => m.provider === s.defaultProvider && m.id === s.defaultModel)) return `${s.defaultProvider}/${s.defaultModel}`;
+	const first = list[0]?.provider;
+	if (!first) return undefined;
+	const preferred = await defaultModel(first);
+	return `${first}/${list.some((m) => m.provider === first && m.id === preferred) ? preferred : list.find((m) => m.provider === first)!.id}`;
 }

@@ -28,14 +28,25 @@ async function pipedLine(): Promise<string> {
 }
 
 /** Raw keys until `onKey` returns true. A chunk may hold several keys (pasted text, fast typing): one at a time, an
- * arrow's escape sequence counting as one key; what follows the deciding key is dropped. */
+ * arrow's escape sequence counting as one key; what follows the deciding key is dropped. A terminal in bracketed-paste
+ * mode marks pasted text: the marks are not keys, and a line end inside a paste is not Enter. */
 function keys(onKey: (key: string) => boolean | undefined): Promise<void> {
 	return new Promise((resolve) => {
 		const stdin = process.stdin;
 		stdin.setRawMode(true);
 		stdin.resume();
+		let pasting = false;
+		let held = ""; // an escape sequence cut off at the end of a read: it comes whole with the next one
 		const onData = (buf: Buffer) => {
-			for (const k of buf.toString("utf8").match(/\x1b\[[0-9;]*[A-Za-z~]|\x1bO[A-Za-z]|[\s\S]/gu) ?? []) {
+			let chunk = held + buf.toString("utf8");
+			held = /\x1b(\[[0-9;]*)?$/.exec(chunk)?.[0] ?? "";
+			chunk = chunk.slice(0, chunk.length - held.length);
+			for (const k of chunk.match(/\x1b\[[0-9;]*[A-Za-z~]|\x1bO[A-Za-z]|[\s\S]/gu) ?? []) {
+				if (k === "\x1b[200~" || k === "\x1b[201~") {
+					pasting = k === "\x1b[200~";
+					continue;
+				}
+				if (pasting && (k === "\r" || k === "\n")) continue;
 				if (k === "\u0003") {
 					stdin.setRawMode(false);
 					process.stdout.write("\n");

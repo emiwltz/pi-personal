@@ -13,8 +13,8 @@ Pi-personal is TypeScript run directly by Node.js 22 (type stripping: no build s
 | `core/herdr.ts` | Herdr | Finding, installing (Herdr's own installer), updating and starting Herdr Core, and the few `hc` verbs Pi-personal uses (`run`, `get`, `ls`, `kill`, `rm`), and whether a Herdr Core is running without starting one. |
 | `core/agents.ts` | — | An agent on disk: its name, its visible folder (`AGENTS.md`, `pi-personal.json`), its record in the private area; reading and editing settings; the labels and names of its terminals. |
 | `core/cli.ts` | — | The `pp` command: argument parsing (an agent's name can be left out when there is one), human and JSON output, `send --wait`, `stop --all`, `update`, and the dispatch to the modules above. |
-| `core/welcome.ts` | — | `pp` alone (each agent and the next thing to do; it never starts Herdr Core) and `pp setup`, the guide: Herdr Core found, installed or started; a provider; the agent; hello; channels and the login service. |
-| `core/providers.ts` | pi | Model providers the way pi offers them: pi's own list and order, its sign-in (`pi auth login`), its credentials file; keys already on the machine, offered on a yes. |
+| `core/welcome.ts` | — | `pp` alone (each agent and the next thing to do; it never starts Herdr Core) and `pp setup`, the guide: Herdr Core found, installed or started; pi's own screen for /login and /model; the agent and its hello; channels and the login service. |
+| `core/providers.ts` | pi | What pi stored: the providers pi lists models for, the model pi keeps as its default. Opens pi's own screen (`/login`, `/model`), and passes `pp login <provider>` to `pi auth login`. |
 | `core/ask.ts` | — | Questions in the terminal, without a dependency: a list that narrows as you type, yes or no, text, a secret; plain lines when there is no terminal (tests). |
 | `core/setup.ts` | — | `doctor`, the optional login service (systemd user timer or launchd agent), `uninstall`. |
 | `core/paths.ts`, `core/name.ts` | — | Where things live, and the product's names (the core's code takes them from `name.ts`). |

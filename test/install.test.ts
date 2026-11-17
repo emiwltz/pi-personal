@@ -23,7 +23,7 @@ test("install.sh, doctor, service, uninstall", async () => {
 	fs.mkdirSync(userHome, { recursive: true });
 	await run(path.join(ROOT, "install.sh"), [], { env, timeout: 300_000 });
 	const command = path.join(bin, "pp");
-	assert.equal(fs.readFileSync(path.join(bin, "pi-personal"), "utf8"), fs.readFileSync(command, "utf8"), "the long name is the same command");
+	assert.equal(fs.readFileSync(path.join(bin, "pi-personal"), "utf8"), fs.readFileSync(command, "utf8").replace("PI_PERSONAL_COMMAND:=pp}", "PI_PERSONAL_COMMAND:=pi-personal}"), "the long name is the same command, which knows its name");
 	assert.ok(fs.existsSync(command));
 	assert.ok(fs.existsSync(path.join(dest, "node_modules", "@earendil-works", "pi-coding-agent")));
 	const p = (...args: string[]) => run(command, args, { env: args[0] === "service" || args[0] === "uninstall" ? { ...env, HOME: userHome } : env, timeout: 120_000 });

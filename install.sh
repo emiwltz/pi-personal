@@ -134,6 +134,7 @@ cat > "$BIN/$n" <<SHIM
 #!/bin/sh
 # Pi-personal's command. Its folder comes first on the PATH, so Herdr Core's hc, installed beside it, is found.
 PATH="$BIN:\$PATH"; export PATH
+: "\${PI_PERSONAL_COMMAND:=$n}"; export PI_PERSONAL_COMMAND # the name it prints in the commands it suggests
 [ -x "$NODE" ] && exec "$NODE" "$DEST/core/cli.ts" "\$@"
 exec node "$DEST/core/cli.ts" "\$@"
 SHIM

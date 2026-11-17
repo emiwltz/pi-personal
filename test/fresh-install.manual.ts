@@ -5,8 +5,8 @@
 //
 // Manual, not part of `npm test`: it downloads about 100 MB and takes a few minutes. Run it before a release:
 //   node --test test/fresh-install.manual.ts
-// Its model is the tests' fake one, declared in the new private area as if the user had configured it; the sign-in
-// step is still exercised, with a made-up OpenAI key that is saved but never used.
+// Its model is the tests' fake one, declared in the new private area as if the user had configured it; pi's own screen
+// is still opened by the guide, and its /model used as a person would (Ctrl+S keeps the model as pi's default).
 import assert from "node:assert/strict";
 import { type ChildProcess, execFile, execFileSync, spawn } from "node:child_process";
 import * as fs from "node:fs";
@@ -149,36 +149,44 @@ test("on a fresh machine: one command installs everything, and the guide ends wi
 	await t.see(/first on your PATH.*\[Y\/n\]/);
 	t.type("y");
 	t.type("\r");
-	await t.see(/1\/5 {2}This machine/);
+	await t.see(/1\/4 {2}This machine/);
 	await t.see(/Install Herdr Core now\?.*\[Y\/n\]/);
 	t.type("y\r");
 	await t.see(/Herdr Core [\d.]+, running/, 5 * 60_000);
-	await t.see(/2\/5 {2}A model provider/);
-	await t.see(/connected: fake/);
-	await t.see(/Connect another provider\?.*\[y\/N\]/);
+	await t.see(/2\/4 {2}A model, with pi/);
+	await t.see(/pi is connected: fake/);
+	await t.see(/Open pi, to connect another provider or choose the model\?.*\[y\/N\]/);
 	t.type("y\r");
-	await t.see(/How do you want to connect\?/);
-	t.type("\x1b[B"); // ↓: Use an API key
+	// pi's own screen, as it always is: /model, Ctrl+S keeps the model as the default, Escape, /quit.
+	await t.see(/escape interrupt/, 120_000);
+	t.type("/model");
+	await t.see(/\/model/);
+	// On a fresh machine pi first fetches its search tools (ripgrep, fd); until then it keeps what was typed and says
+	// "Startup is still in progress": Enter again, as a person would.
+	for (let i = 0; ; i++) {
+		t.type("\r");
+		try {
+			await t.see(/echo-1/, 5_000);
+			break;
+		} catch (err) {
+			if (i >= 24) throw err;
+		}
+	}
+	t.type("\x13"); // Ctrl+S
+	await t.see(/Default model: fake\/echo-1/);
+	t.type("\x1b");
+	await new Promise((r) => setTimeout(r, 500));
+	t.type("/quit");
+	await new Promise((r) => setTimeout(r, 500));
 	t.type("\r");
-	await t.see(/Which provider\?/);
-	t.type("openai");
-	await t.see(/› OpenAI\b/);
-	t.type("\r");
-	await t.see(/API key/i, 60_000);
-	t.type("sk-made-up-for-the-test\r");
-	await t.see(/OpenAI: (connected|not connected)/, 120_000);
-	await t.see(/Connect another provider\?.*\[y\/N\]/);
-	t.type("n\r");
-	await t.see(/3\/5 {2}Your agent/);
-	await t.see(/Which model\?/, 120_000);
-	t.type("echo");
-	await t.see(/› fake\/echo-1/);
-	t.type("\r");
+	await t.see(/pi is connected: fake/, 60_000);
+	assert.equal(JSON.parse(fs.readFileSync(path.join(privateArea(), "pi", "settings.json"), "utf8")).defaultModel, "echo-1", "pi kept the model it was told to");
+	await t.see(/3\/4 {2}Your agent/);
 	await t.see(/Name your agent/);
 	t.type("\r");
-	await t.see(/main created in ~\/pi-personal\/main/);
-	await t.see(/4\/5 {2}Start it/);
+	await t.see(/main created in ~\/pi-personal\/main, with fake\/echo-1/);
 	await t.see(/main › echo: Say hello/, 180_000);
+	await t.see(/4\/4 {2}Reach it from anywhere/);
 	await t.see(/Talk to main from Telegram\?.*\[y\/N\]/);
 	t.type("n\r");
 	await t.see(/Bring main back by itself if it stops\?.*\[Y\/n\]/);

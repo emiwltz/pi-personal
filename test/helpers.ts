@@ -39,7 +39,9 @@ async function defaultCoreId(): Promise<string | undefined> {
 }
 const DEFAULT_CORE = await defaultCoreId();
 
-export async function setup(name: string): Promise<Env> {
+/** requireKey: the fake model answers 401 unless the request carries that bearer key, and the provider in models.json has
+ * no apiKey of its own (so pi takes the key from auth.json, as with a real provider). */
+export async function setup(name: string, opts: { requireKey?: string } = {}): Promise<Env> {
 	// Unix socket paths are limited to about 100 characters: keep the scratch folder short.
 	const dir = fs.mkdtempSync(`/tmp/pt-${name.slice(0, 6)}-`);
 	for (const d of ["run", "state", "config", "data", "cache", "home"]) fs.mkdirSync(path.join(dir, d), { mode: 0o700 });
@@ -67,7 +69,7 @@ export async function setup(name: string): Promise<Env> {
 		const out = execFileSync("hc", [...args, "--json"], { env, encoding: "utf8", timeout: 30_000 });
 		return out.trim() ? JSON.parse(out) : {};
 	};
-	const model = await fakeModel();
+	const model = await fakeModel(opts.requireKey);
 	// pi's shared configuration in the private area: one fake provider.
 	const piDir = path.join(dir, "home", "pi");
 	fs.mkdirSync(piDir, { recursive: true, mode: 0o700 });
@@ -78,7 +80,7 @@ export async function setup(name: string): Promise<Env> {
 				fake: {
 					baseUrl: `http://127.0.0.1:${model.port}/v1`,
 					api: "openai-completions",
-					apiKey: "fake",
+					...(opts.requireKey === undefined ? { apiKey: "fake" } : {}),
 					models: [{ id: "echo-1", name: "Fake", contextWindow: 32000, maxTokens: 2000 }],
 				},
 			},
@@ -134,8 +136,8 @@ export interface FakeModel {
 
 /** An OpenAI-compatible fake model. Replies "echo: <last user text>"; "tool: <cmd>" makes it call bash with <cmd>;
  * "call: <tool> <json>" calls any tool; "long:<n>" replies n x's; "fail: <why>" is refused with an HTTP 400;
- * "silent:" ends the run with an empty answer; "flaky: <x>" is refused once with a passing error, then answered. */
-export async function fakeModel(): Promise<FakeModel> {
+ * "denied:" is refused with an HTTP 401, as a wrong key is; "silent:" ends the run with an empty answer; "flaky: <x>" is refused once with a passing error, then answered. */
+export async function fakeModel(requireKey?: string): Promise<FakeModel> {
 	const requests: FakeModel["requests"] = [];
 	const flaked = new Set<string>(); // "flaky: <x>" is refused once with a passing error (503), then answered
 	const textOf = (m: any) => (typeof m.content === "string" ? m.content : (m.content ?? []).map((p: any) => p.text ?? "").join(" "));
@@ -147,6 +149,11 @@ export async function fakeModel(): Promise<FakeModel> {
 			if (req.method === "GET") {
 				res.writeHead(200, { "content-type": "application/json" });
 				res.end(JSON.stringify({ object: "list", data: [{ id: "echo-1", object: "model" }] }));
+				return;
+			}
+			if (requireKey !== undefined && req.headers.authorization !== `Bearer ${requireKey}`) {
+				res.writeHead(401, { "content-type": "application/json" });
+				res.end(JSON.stringify({ type: "error", error: { type: "authentication_error", message: "invalid x-api-key" }, request_id: "req_fake" }));
 				return;
 			}
 			const r = JSON.parse(body || "{}");
@@ -169,6 +176,12 @@ export async function fakeModel(): Promise<FakeModel> {
 			if (last.role === "tool" && utext.includes("interim-fail:")) {
 				res.writeHead(400, { "content-type": "application/json" });
 				res.end(JSON.stringify({ error: { message: "fake refusal after an interim reply", type: "invalid_request_error" } }));
+				return;
+			}
+			// "denied:" is refused as a wrong key is, word for word as Anthropic refuses one.
+			if (last.role !== "tool" && utext.includes("denied:")) {
+				res.writeHead(401, { "content-type": "application/json" });
+				res.end(JSON.stringify({ type: "error", error: { type: "authentication_error", message: "invalid x-api-key" }, request_id: "req_fake" }));
 				return;
 			}
 			if (last.role !== "tool" && utext.includes("fail:") && !utext.includes("interim-fail:")) {

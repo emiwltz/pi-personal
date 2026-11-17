@@ -7,6 +7,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import * as agents from "./agents.ts";
 import * as ask from "./ask.ts";
+import * as bridge from "./bridge.ts";
 import { hint, say, style } from "./ask.ts";
 import * as control from "./control.ts";
 import * as herdr from "./herdr.ts";
@@ -76,9 +77,7 @@ export async function overview(version: string): Promise<number> {
 // ---- `pp setup`: everything, step by step; run again, it keeps what is done --------------------------------------
 
 
-const STEPS = 5;
-/** The command as the person can type it now: the installer says when another `pp` comes first on this terminal's PATH. */
-const run = () => process.env.PI_PERSONAL_COMMAND || COMMAND;
+const STEPS = 4;
 const head = (n: number, title: string) => ask.step(`${n}/${STEPS}  ${title}`);
 
 /** Herdr Core, found or installed, up to date, running. */
@@ -122,88 +121,52 @@ async function machine(): Promise<boolean> {
 	return true;
 }
 
-/** At least one model provider, the way pi offers them; credentials already on the machine are offered first. */
-async function provider(): Promise<string[]> {
-	head(2, "A model provider");
+/** A model, the way pi does it: pi's own screen opens here, for /login and /model; Pi-personal reads what pi stored. */
+async function model(): Promise<string[]> {
+	head(2, "A model, with pi");
 	const all = await providers.providers();
-	const nameOf = (id: string) => all.find((p) => p.id === id)?.name ?? id;
+	const names = (ids: string[]) => ids.map((id) => all.find((p) => p.id === id)?.name ?? id).join(", ");
 	const ready = providers.connected;
-	if (ready().length) ask.ok(`connected: ${ready().map(nameOf).join(", ")}`);
-	else {
-		// What this machine already has: keys in this terminal's environment, and the user's own pi.
-		for (const p of all) {
-			for (const v of await providers.envKeys(p.id)) {
-				if (!/_API_KEY$|^HF_TOKEN$/.test(v) || ready().includes(p.id)) continue;
-				if (await ask.confirm(`${v} is set in this terminal. Use it for ${p.name}?`)) {
-					await providers.saveEnvKey(p.id, v);
-					ask.ok(`${p.name}: key saved for your agents (${PRODUCT} keeps it in its private area, readable by you only)`);
-				}
-			}
-		}
-		const theirs = providers.userPiAuth();
-		if (theirs) {
-			const found = providers.stored(theirs);
-			for (const [id, kind] of Object.entries(found)) {
-				if (ready().includes(id)) continue;
-				if (kind === "api_key") {
-					if (await ask.confirm(`Your own pi has an API key for ${nameOf(id)}. Use it here too?`)) {
-						await providers.copyKey(theirs, id);
-						ask.ok(`${nameOf(id)}: key copied (your pi is not changed)`);
-					}
-				} else ask.hint(`Your own pi is signed in to ${nameOf(id)} with an account: sign in again below rather than share it (two programs sharing one sign-in can log each other out).`);
-			}
-		}
-		if (ready().length) ask.ok(`connected: ${ready().map(nameOf).join(", ")}`);
+	let open = false; // said yes already
+	if (ready().length) {
+		ask.ok(`pi is connected: ${names(ready())}`);
+		if (!(open = await ask.confirm("Open pi, to connect another provider or choose the model?", false))) return ready();
 	}
-	while (!ready().length)
-		if (!(await connect(all)) && !(await ask.confirm("Try again?"))) {
-			ask.fail(`No provider connected. Later: ${COMMAND} login, then ${COMMAND} setup`);
-			return [];
+	for (let again = false; ; again = true) {
+		ask.say("  pi opens here, as it always does. In pi:");
+		ask.say(`    ${style.cyan("/login")}   connect a provider: an account (a subscription) or an API key`);
+		ask.say(`    ${style.cyan("/model")}   choose the model; ${style.cyan("Ctrl+S")} there keeps it as the default`);
+		ask.say(`    ${style.cyan("/quit")}    come back here`);
+		if (!ask.interactive()) {
+			ask.fail(`This step needs a terminal. Later: ${COMMAND} setup, or ${COMMAND} login <provider> --api-key`);
+			return ready();
 		}
-	while (await ask.confirm("Connect another provider?", false)) await connect(all);
+		if (!open && !(await ask.confirm(again ? "Open pi again?" : "Open pi?"))) break;
+		open = false;
+		providers.openPi();
+		ask.say("");
+		if (ready().length) {
+			ask.ok(`pi is connected: ${names(ready())}`);
+			return ready();
+		}
+		ask.warn("pi has no provider connected yet: /login in pi connects one.");
+	}
+	if (!ready().length) ask.fail(`No provider connected. Later: ${COMMAND} setup`);
 	return ready();
 }
 
-/** One sign-in, the way pi's own /login offers it: an account or an API key, then the provider. */
-export async function connect(all?: providers.Provider[]): Promise<boolean> {
-	all ??= await providers.providers();
-	const ready = providers.connected();
-	const how = await ask.choose("How do you want to connect?", [
-		{ label: "Sign in with an account", value: "account" as const, note: "a subscription or an account, in your browser" },
-		{ label: "Use an API key", value: "key" as const, note: "a key from the provider's website" },
-	]);
-	const choices = all.filter((p) => (how === "account" ? p.account : p.apiKey));
-	const id = await ask.choose(
-		"Which provider?",
-		choices.map((p) => ({
-			label: p.name,
-			value: p.id,
-			note: [ready.includes(p.id) ? "✓ connected" : "", how === "account" && p.account?.subscription ? "subscription" : ""].filter(Boolean).join(" · ") || undefined,
-		})),
-	);
-	const name = all.find((p) => p.id === id)?.name ?? id;
-	if (id === "anthropic" && how === "account")
-		ask.hint("pi's note: with an Anthropic subscription, use by a program like this one draws from extra usage, billed per token (claude.ai/settings/usage).");
-	ask.say("");
-	const done = providers.login(id, how === "key");
-	ask.say("");
-	if (done && providers.check(id) === "ready") {
-		ask.ok(`${name}: connected`);
-		return true;
-	}
-	ask.fail(`${name}: not connected${done ? " (pi could not use it)" : ""}. Try again, or choose another.`);
-	return false;
-}
-
-/** The agent: an existing one is kept; a first one gets a model and a name. `created` when this run made it. */
+/** The agent: an existing one is kept; a first one gets a name, and the model chosen in pi. `created` when this run made it. */
 async function agent(connected: string[]): Promise<{ name: string; created: boolean } | undefined> {
 	head(3, "Your agent");
 	const names = agents.list();
 	if (names.length) {
+		const chosen = await providers.chosenModel();
 		for (const n of names) {
 			try {
 				const a = agents.load(n);
 				ask.ok(`${n}  ${a.settings.model ?? "no model"}  ${tilde(a.folder)}`);
+				if (chosen && a.settings.model && chosen !== a.settings.model)
+					ask.hint(`it keeps its own model; for pi's default (${chosen}): "model" in ${tilde(path.join(a.folder, SETTINGS_FILE))}, then ${COMMAND} restart ${n}`);
 			} catch (err) {
 				ask.fail(`${n}: ${(err as Error).message}`);
 			}
@@ -211,17 +174,11 @@ async function agent(connected: string[]): Promise<{ name: string; created: bool
 		return { name: names[0], created: false };
 	}
 	if (!connected.length) return undefined;
-	const list = providers.models().filter((m) => connected.includes(m.provider));
-	if (!list.length) {
+	const model = await providers.chosenModel();
+	if (!model) {
 		ask.fail(`pi lists no model for ${connected.join(", ")}. See: ${COMMAND} models`);
 		return undefined;
 	}
-	const preferred = await providers.defaultModel(connected[0]);
-	const sorted = [...list].sort((a, b) => Number(`${b.provider}/${b.id}` === `${connected[0]}/${preferred}`) - Number(`${a.provider}/${a.id}` === `${connected[0]}/${preferred}`));
-	const model = await ask.choose(
-		"Which model?",
-		sorted.map((m) => ({ label: `${m.provider}/${m.id}`, value: `${m.provider}/${m.id}`, note: `${m.provider}/${m.id}` === `${connected[0]}/${preferred}` ? "pi's default" : m.context ? `${m.context} context` : undefined })),
-	);
 	let name = "";
 	for (;;) {
 		name = await ask.text("Name your agent", "main");
@@ -248,35 +205,61 @@ async function agent(connected: string[]): Promise<{ name: string; created: bool
 			agents.editSettings(folder, (s) => {
 				s.model = model;
 			});
-	} else ask.ok(`${name} created in ${tilde(folder)}`);
+	} else ask.ok(`${name} created in ${tilde(folder)}, with ${model}`);
 	ask.hint(`Its instructions, yours to edit: ${tilde(path.join(folder, "AGENTS.md"))}`);
+	ask.hint(`Its model: "model" in ${tilde(path.join(folder, SETTINGS_FILE))} (the ids: ${COMMAND} models), then ${COMMAND} restart`);
 	return { name, created: true };
 }
 
 /** Start the agent; one it has just met (created or started now) says hello. A running one is left alone: its
  * conversation is the person's, not the guide's. */
 async function hello(name: string, created: boolean): Promise<boolean> {
-	head(4, "Start it");
 	const r = await control.start(name, 60_000);
 	if (r.ready === false) {
 		ask.fail(`${name} did not get ready: ${r.trouble}`);
 		return false;
 	}
 	ask.ok(`${name} runs in Herdr Core, in the background: closing this window does not stop it`);
-	if (!created) {
-		ask.hint(`Watch it work, or take over: ${run()} attach   (ctrl+\\ to leave)`);
-		return true;
-	}
 	const a = agents.loadRecord(name);
+	let said: string[] = [];
+	let error: string | undefined;
+	if (created) ({ said, error } = await greet(a.paths.port));
+	else {
+		// A kept agent is not greeted, unless its provider refused its credentials last time: then they are put right
+		// below, and a hello checks them.
+		const last = control.status(name).lastError?.error;
+		if (!last || !bridge.refused(last)) {
+			ask.hint(`Watch it work, or take over: ${COMMAND} attach   (ctrl+\\ to leave)`);
+			return true;
+		}
+		({ said, error } = await greet(a.paths.port)); // perhaps put right since (pp login): asked again only if still refused
+	}
+	// The hello is the first real request: a provider refusing the credentials is put right here, in a few keys.
+	for (let tries = 0; !said.length && error && bridge.refused(error) && tries < 3 && ask.interactive(); tries++) {
+		ask.fail(error.replace(/\. To enter new ones: .*$/, ""));
+		if (!(await ask.confirm("Open pi to sign in again (/login there, then /quit)?"))) break;
+		providers.openPi();
+		ask.say("");
+		({ said, error } = await greet(a.paths.port));
+	}
+	if (said.length) for (const line of said.join("\n").split("\n")) ask.say(`  ${style.cyan(`${name} ›`)} ${line}`);
+	else ask.warn(`no answer yet${error ? `: ${error}` : ""}. See: ${COMMAND} status`);
+	ask.say("");
+	ask.hint(`Watch it work, or take over: ${COMMAND} attach   (ctrl+\\ to leave)`);
+	return said.length > 0;
+}
+
+/** Ask the agent to say hello, and wait (2 minutes at most) for what it says, or why it could not. */
+async function greet(dir: string): Promise<{ said: string[]; error?: string }> {
 	const id = `setup-${randomUUID()}`;
-	const from = port.end(a.paths.port);
-	port.submit(a.paths.port, { id, text: "Say hello to the person who just set you up, in one or two short sentences.", conversation: "cli" });
+	const from = port.end(dir);
+	port.submit(dir, { id, text: "Say hello to the person who just set you up, in one or two short sentences.", conversation: "cli" });
 	const said: string[] = [];
 	let error: string | undefined;
 	const ac = new AbortController();
 	const timer = setTimeout(() => ac.abort(), 120_000);
 	await port.follow(
-		a.paths.port,
+		dir,
 		from,
 		(e) => {
 			const mine = Array.isArray(e.refs) && (e.refs as port.Ref[]).some((x) => x.id === id);
@@ -289,16 +272,12 @@ async function hello(name: string, created: boolean): Promise<boolean> {
 		ac.signal,
 	);
 	clearTimeout(timer);
-	if (said.length) for (const line of said.join("\n").split("\n")) ask.say(`  ${style.cyan(`${name} ›`)} ${line}`);
-	else ask.warn(`no answer yet${error ? `: ${error}` : ""}. See: ${COMMAND} status`);
-	ask.say("");
-	ask.hint(`Watch it work, or take over: ${run()} attach   (ctrl+\\ to leave)`);
-	return said.length > 0;
+	return { said, error };
 }
 
 /** Channels that ship with Pi-personal and can set themselves up, then the login service. */
 async function reach(name: string): Promise<void> {
-	head(5, "Reach it from anywhere");
+	head(4, "Reach it from anywhere");
 	const a = agents.load(name);
 	const shipped = fs.readdirSync(path.join(ROOT, "channels")).filter((c) => agents.shipped(c));
 	for (const ch of shipped) {
@@ -345,16 +324,16 @@ export async function setup(version: string): Promise<number> {
 	ask.say("Your own agent: a pi session that lives in Herdr Core on this machine, and answers wherever you write to it.");
 	ask.say(style.dim(`This takes a few minutes. Run ${COMMAND} setup again any time: it keeps what is done.`));
 	if (!(await machine())) return 1;
-	const connected = await provider();
+	const connected = await model();
 	if (!connected.length) return 1;
 	const made = await agent(connected);
 	if (!made) return 1;
 	const { name } = made;
 	const ok = await hello(name, made.created);
 	await reach(name);
-	ask.step("Done");
+	ask.step(ok ? "Done" : `Done, but ${name} has not answered yet: see step 3`);
 	const who = agents.list().length > 1 ? ` ${name}` : "";
-	const pp = run();
+	const pp = COMMAND;
 	ask.say(`  Talk to it:     ${style.cyan(`${pp} chat${who}`)}`);
 	ask.say(`  Watch it work:  ${pp} attach${who}`);
 	ask.say(`  How it is:      ${pp}`);

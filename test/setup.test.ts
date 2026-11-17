@@ -1,5 +1,6 @@
-// `pp setup` and `pp` alone, answered through standard input (no terminal): the machine is checked, the provider
-// already connected is kept, a first agent is created with pi's model list, started, and says hello.
+// `pp setup` and `pp` alone, answered through standard input (no terminal): the machine is checked, the provider pi
+// is already connected to is kept (pi's own screen is not opened), a first agent is created with pi's model, started,
+// and says hello.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import * as fs from "node:fs";
@@ -40,13 +41,12 @@ test("pp alone, before anything: says where to start", async () => {
 });
 
 test("pp setup: keeps the connected provider, creates main with pi's model, starts it, and it says hello", async () => {
-	// Answers: no other provider · the first model · the name "main" · no Telegram · no login service.
-	const r = await answered(["setup"], ["", "", "", "", "n"]);
+	// Answers: pi is not opened · the name "main" · no Telegram · no login service.
+	const r = await answered(["setup"], ["", "", "", "n"]);
 	assert.equal(r.code, 0, r.out);
-	assert.match(r.out, /1\/5 {2}This machine[\s\S]*Herdr Core \d+\.\d+\.\d+, running/);
-	assert.match(r.out, /connected: fake/);
-	assert.match(r.out, /fake\/echo-1/);
-	assert.match(r.out, /main created in/);
+	assert.match(r.out, /1\/4 {2}This machine[\s\S]*Herdr Core \d+\.\d+\.\d+, running/);
+	assert.match(r.out, /2\/4 {2}A model, with pi[\s\S]*pi is connected: fake/);
+	assert.match(r.out, /main created in \S+, with fake\/echo-1/);
 	assert.match(r.out, /main › echo: Say hello/);
 	assert.match(r.out, /Talk to it: +pp chat/);
 	assert.ok(fs.existsSync(path.join(t.dir, "home", "agents", "main")), "the agent's record is in the private area");

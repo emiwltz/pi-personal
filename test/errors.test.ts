@@ -55,6 +55,29 @@ test("a refused request ends with a settled carrying the error, with refs (the l
 	assert.ok(!all.some((e) => e.type === "status" && (e as any).state === "error"), 'no status "error" any more');
 });
 
+test("credentials the provider refuses are said in plain words, with the command that enters new ones", async () => {
+	const r = await t.cli("send", "main", "denied: a wrong key", "--id", "e0", "--wait", "--timeout", "60");
+	assert.equal(r.code, 1, `send --wait must fail: ${r.stdout}${r.stderr}`);
+	assert.match(r.stderr, /fake refused the credentials: 401 invalid x-api-key\. To enter new ones: pp login\n/);
+	assert.doesNotMatch(r.stderr, /request_id|\{"type"/, "the provider's JSON is not shown");
+});
+
+test("refused credentials are told from other errors: providers' own words, not any 403 or any word 'authentication'", async () => {
+	const { explain, refused } = await import("../core/bridge.ts");
+	for (const e of [
+		`401 {"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}`,
+		"401: Incorrect API key provided: sk-ab***cd.",
+		`400 [{"error":{"code":400,"message":"API key not valid. Please pass a valid API key.","status":"INVALID_ARGUMENT"}}]`,
+		"401 No auth credentials found",
+		"Invalid API Key",
+		"Authentication Fails (no such user)",
+	])
+		assert.ok(refused(e) || refused(explain(e, "p")), `refused: ${e}`);
+	for (const e of ["403: model claude-x is not available on your plan", "503 authentication service unavailable, try again", "fake refusal: bad key", "429 rate limited"])
+		assert.ok(!refused(e) && !/refused the credentials/.test(explain(e, "p")), `not refused: ${e}`);
+	assert.equal(explain(`400 [{"error":{"message":"API key not valid. Please pass a valid API key."}}]`, "google"), "google refused the credentials: 400 API key not valid. Please pass a valid API key. To enter new ones: pp login");
+});
+
 test("send --wait --json reports the error and exits 1", async () => {
 	const r = await t.cli("send", "main", "fail: json please", "--id", "e2", "--wait", "--timeout", "60", "--json");
 	assert.equal(r.code, 1);

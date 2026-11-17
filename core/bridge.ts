@@ -13,6 +13,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { COMMAND } from "./name.ts";
 import * as port from "./port.ts";
 
 const MESSAGE = "pi-personal.message";
@@ -31,6 +32,29 @@ function compose(msg: port.Message): string {
 	const files = msg.attachments.map((a) => `- ${a}`).join("\n");
 	return `${msg.text}${msg.text ? "\n\n" : ""}Attached files:\n${files}`;
 }
+
+/** A provider's error, said for a person: a JSON body shortened to its message, and, when the provider refused the
+ * credentials, the command that enters new ones. */
+export function explain(raw: string | undefined, provider?: string): string {
+	let text = (raw ?? "").trim() || "the model request failed";
+	const body = /^(\d{3}):?\s+([[{][\s\S]*[\]}])$/.exec(text); // "401 {…}" (the whole body) or "401: {…}" (its error)
+	if (body)
+		try {
+			const parsed = JSON.parse(body[2]);
+			const j = Array.isArray(parsed) ? parsed[0] : parsed;
+			const said = j?.error?.message ?? j?.message ?? (typeof j?.error === "string" ? j.error : undefined);
+			if (typeof said === "string" && said.trim()) text = `${body[1]} ${said.trim()}`;
+		} catch {} // not JSON after all: kept whole
+	// `pp login` alone: an account or an API key, as the person chooses, with what the guide does around pi's prompt.
+	return provider && (refused(raw ?? "") || refused(text)) ? `${provider} refused the credentials: ${text.replace(/[.\s]+$/, "")}. To enter new ones: ${COMMAND} login` : text;
+}
+
+/** Whether an error says the provider refused the credentials: a wrong, revoked or missing key, or an expired sign-in.
+ * An HTTP 401 at the start (pi puts the status first), or a provider's own words for it; not any 403 (a model the
+ * plan does not include) nor any word "authentication". */
+export const refused = (text: string): boolean =>
+	/^401\b/.test(text.trim()) ||
+	/authentication[\s_]*(error|fails|failed)|unauthori[sz]ed|invalid[\s_-]*(x-)?api[\s_-]*key|incorrect api key|api key not valid|no auth credentials|invalid[\s_-]*(credentials|token)|token (has )?expired|refused the credentials/i.test(text);
 
 type Entry = Record<string, any>;
 type Details = { id: string; from?: port.From; conversation?: string };
@@ -380,7 +404,7 @@ export default function bridge(pi: ExtensionAPI) {
 				runError = undefined;
 				lastError();
 			}
-			if (m.stopReason === "error") runError = m.errorMessage ?? "the model request failed"; // said by settled, at the end
+			if (m.stopReason === "error") runError = explain(m.errorMessage, (m as { provider?: string }).provider); // said by settled, at the end
 		})();
 	});
 

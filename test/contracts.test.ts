@@ -34,25 +34,62 @@ const folder = (name: string) => {
 
 // ---- pi --------------------------------------------------------------------------------------------------------
 
-test("pi: its providers, their sign-in methods, environment variables and default models can be read (pp setup shows them)", async () => {
+test("pi: its providers' names and default models can be read (pp setup names them, and starts with pi's default)", async () => {
 	const p = await import("../core/providers.ts");
 	const all = await p.providers();
 	assert.ok(all.length > 10, `pi lists ${all.length} providers`);
-	const anthropic = all.find((x) => x.id === "anthropic");
-	assert.ok(anthropic?.account && anthropic.apiKey, "Anthropic: an account sign-in and an API key");
-	assert.deepEqual(await p.envKeys("openai", { OPENAI_API_KEY: "x" }), ["OPENAI_API_KEY"]);
+	assert.equal(all.find((x) => x.id === "anthropic")?.name, "Anthropic");
 	assert.equal(typeof (await p.defaultModel("anthropic")), "string", "pi names a default model for Anthropic");
 });
 
-test("pi: auth check answers in JSON, auth login takes --api-key, and --list-models prints a provider/model table (pp reads them)", () => {
+test("pi: auth login takes --api-key, and --list-models prints a provider/model table (pp login and pp setup use them)", () => {
 	const env = { ...t.env, PI_CODING_AGENT_DIR: path.join(t.home, "pi"), PI_TELEMETRY: "0", PI_SKIP_VERSION_CHECK: "1", PI_OFFLINE: "1" };
-	const check = spawnSync(process.execPath, [piCli(), "auth", "check", "--provider", "anthropic", "--json"], { env, encoding: "utf8", timeout: 60_000 });
-	assert.equal(JSON.parse(check.stdout.trim().split("\n").pop() ?? "{}").status, "not_ready");
 	const login = spawnSync(process.execPath, [piCli(), "auth", "login"], { env, encoding: "utf8", timeout: 60_000 });
 	assert.match(`${login.stdout}${login.stderr}`, /pi auth login <provider> \[--api-key\]/);
 	const list = spawnSync(process.execPath, [piCli(), "--list-models"], { env, encoding: "utf8", timeout: 60_000 });
 	assert.match(list.stdout, /^provider\s{2,}model\s{2,}/m);
 	assert.match(list.stdout, /^fake\s{2,}echo-1\s/m);
+});
+
+test("pp setup starts with the model pi keeps as its default (/model, then Ctrl+S), else pi's first for the provider", async () => {
+	const p = await import("../core/providers.ts");
+	const file = path.join(t.home, "pi", "settings.json");
+	const kept = fs.readFileSync(file, "utf8");
+	const was = process.env.PI_PERSONAL_HOME;
+	process.env.PI_PERSONAL_HOME = t.home;
+	try {
+		assert.equal(await p.chosenModel(), "fake/echo-1", "no default kept: the first model pi lists for the provider");
+		fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(kept), defaultProvider: "fake", defaultModel: "echo-1" }));
+		assert.equal(await p.chosenModel(), "fake/echo-1");
+		fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(kept), defaultProvider: "gone", defaultModel: "x" }));
+		assert.equal(await p.chosenModel(), "fake/echo-1", "a default whose provider is not connected is not used");
+	} finally {
+		if (was === undefined) delete process.env.PI_PERSONAL_HOME;
+		else process.env.PI_PERSONAL_HOME = was;
+		fs.writeFileSync(file, kept);
+	}
+});
+
+test("a pasted API key is stored without what a terminal adds around a paste (spaces, line ends, paste marks)", async () => {
+	const p = await import("../core/providers.ts");
+	const file = path.join(t.home, "pi", "auth.json");
+	const kept = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : undefined;
+	const was = process.env.PI_PERSONAL_HOME;
+	process.env.PI_PERSONAL_HOME = t.home;
+	try {
+		fs.writeFileSync(file, JSON.stringify({ made: { type: "api_key", key: " \x1b[200~sk-made-up-123[201~\n" } }), { mode: 0o600 });
+		assert.equal(await p.tidyKey("made"), true);
+		assert.equal(JSON.parse(fs.readFileSync(file, "utf8")).made.key, "sk-made-up-123");
+		assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+		fs.writeFileSync(file, JSON.stringify({ made: { type: "api_key", key: "\x1b[200~\x1b[201~" } }), { mode: 0o600 });
+		assert.equal(await p.tidyKey("made"), false, "nothing was pasted");
+		assert.equal(await p.tidyKey("absent"), false);
+	} finally {
+		if (was === undefined) delete process.env.PI_PERSONAL_HOME;
+		else process.env.PI_PERSONAL_HOME = was;
+		if (kept === undefined) fs.rmSync(file, { force: true });
+		else fs.writeFileSync(file, kept, { mode: 0o600 });
+	}
 });
 
 test("pi: in rpc mode it answers get_state once it has loaded (the runner's sign that pi got through loading)", () => {

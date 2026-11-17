@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { closeFences, toHtml } from "../channels/telegram/format.ts";
-import { split } from "../channels/telegram/telegram.ts";
+import { findToken, split } from "../channels/telegram/telegram.ts";
 import * as port from "../core/port.ts";
 import { type FakeTelegram, fakeTelegram } from "./fake-telegram.ts";
 import { type Env, ROOT, setup, sleep } from "./helpers.ts";
@@ -40,6 +40,19 @@ before(async () => {
 after(async () => {
 	tg?.close();
 	await t?.close();
+});
+
+test("setup finds the bot token in what was pasted: the token alone, or BotFather's whole message", () => {
+	const tok = "123456789:AAH3x_fake-Token-For-The-Test-1234567";
+	assert.equal(findToken(tok), tok);
+	assert.equal(findToken(`  ${tok}  `), tok);
+	const message = `Done! Congratulations on your new bot. You will find it at t.me/some_bot.\n\nUse this token to access the HTTP API:\n${tok}\nKeep your token secure and store it safely.`;
+	assert.equal(findToken(message), tok);
+	assert.equal(findToken("Done! Congratulations on your new bot."), undefined);
+	assert.equal(findToken("https://t.me/some_bot"), undefined);
+	const dash = "123456789:AAHdefghijklmnopqrstuvwxyz0123456-"; // a token can end in "-"
+	assert.equal(findToken(dash), dash);
+	assert.equal(findToken(`${dash}\nKeep your token secure.`), dash);
 });
 
 test("split keeps every piece within 4096 UTF-16 units and never cuts a character", () => {
@@ -218,4 +231,42 @@ test("a photo is saved to a file and its path given to the agent; the token neve
 	assert.deepEqual(grep(folder()), []);
 	assert.deepEqual(grep(t.home), [], "the token appears only in its secret file");
 	assert.equal((fs.statSync(path.join(t.home, "agents", "main", "secrets", "telegram-token")).mode & 0o777).toString(8), "600");
+});
+
+test("setup in a terminal: BotFather's whole message pasted (the terminal marks it), then the owner writes and is let in", { skip: process.platform !== "linux" && "script(1) is driven this way on Linux; on macOS, the fresh-machine test covers the guide" }, async () => {
+	const tok = "123456789:AAH3x_fake-Token-For-The-Test-1234567";
+	const tg2 = await fakeTelegram(tok);
+	const { spawn } = await import("node:child_process");
+	let term: ReturnType<typeof spawn> | undefined;
+	try {
+		const dir = path.join(t.dir, "tgs");
+		assert.equal((await t.cli("init", "tgs", dir, "--model", "fake/echo-1")).code, 0);
+		const file = path.join(dir, "pi-personal.json");
+		fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, "utf8")), channels: { telegram: { apiBase: tg2.base } } }, null, 2));
+		term = spawn("script", ["-qfec", `'${process.execPath}' '${path.join(ROOT, "core", "cli.ts")}' channel tgs telegram setup`, "/dev/null"], { env: t.env, stdio: ["pipe", "pipe", "pipe"] });
+		let screen = "";
+		term.stdout!.on("data", (d) => (screen += d.toString()));
+		const see = async (re: RegExp, ms = 30_000) => {
+			for (const end = Date.now() + ms; !re.test(screen); await sleep(100)) if (Date.now() > end) throw new Error(`not seen: ${re}\n--- screen ---\n${screen}`);
+		};
+		await see(/Paste the token/);
+		await see(/\x1b\[\?2004h/); // it asks the terminal to mark pastes
+		term.stdin!.write(`\x1b[200~Done! Congratulations on your new bot.\r\rUse this token to access the HTTP API:\r${tok}\rKeep your token secure.\x1b[201~`);
+		await sleep(500);
+		assert.doesNotMatch(screen.slice(screen.lastIndexOf("empty to skip")), /received|✔|✘/, "a line end inside the paste is not Enter");
+		term.stdin!.write("\r");
+		await see(/bot @pi_personal_test_bot answers/);
+		assert.doesNotMatch(screen, /AAH3x_fake/, "the token is never shown");
+		await see(/Waiting/);
+		tg2.push({ from: { id: 4242, first_name: "Owner" }, chat: { id: 4242, type: "private" }, text: "/start", date: Math.floor(Date.now() / 1000) });
+		await see(/Is that you\?/);
+		term.stdin!.write("y\r");
+		await see(/4242 is allowed/);
+		const t2 = term;
+		assert.equal(await new Promise((r) => (t2.exitCode !== null ? r(t2.exitCode) : t2.on("close", r))), 0, screen);
+		assert.equal(fs.readFileSync(path.join(t.home, "agents", "tgs", "secrets", "telegram-token"), "utf8").trim(), tok, "the token alone is stored");
+	} finally {
+		term?.kill();
+		tg2.close();
+	}
 });

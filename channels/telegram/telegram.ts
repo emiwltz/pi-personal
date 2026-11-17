@@ -408,6 +408,8 @@ async function send(): Promise<never> {
 
 // ---- setup: a bot token, then the first person to let in ------------------------------------------------------
 
+/** One answer in the terminal. A paste is taken whole, line ends included (BotFather's message is several lines): the
+ * terminal marks it (bracketed paste, turned on while asking), or, in a terminal without it, it comes in one piece. */
 const ask = (q: string, hidden = false): Promise<string> =>
 	new Promise((resolve) => {
 		process.stdout.write(q);
@@ -426,32 +428,51 @@ const ask = (q: string, hidden = false): Promise<string> =>
 			stdin.on("data", onData).resume();
 			return;
 		}
+		const done = () => {
+			stdin.off("data", onData);
+			stdin.setRawMode(false);
+			stdin.pause();
+			process.stdout.write("\x1b[?2004l");
+		};
 		stdin.setRawMode(true);
+		process.stdout.write("\x1b[?2004h");
 		stdin.resume();
 		let value = "";
+		let pasting = false;
+		let held = ""; // the start of a mark cut off at the end of a read: it comes whole with the next one
 		const onData = (b: Buffer) => {
-			for (const ch of b.toString("utf8")) {
-				if (ch === "\u0003") {
-					stdin.setRawMode(false);
+			let chunk = held + b.toString("utf8");
+			held = /\x1b(\[[0-9;]*)?$/.exec(chunk)?.[0] ?? "";
+			chunk = chunk.slice(0, chunk.length - held.length);
+			const whole = /[\r\n][\s\S]*\S/.test(chunk); // text after a line end: a paste, in a terminal that does not mark it
+			for (const k of chunk.match(/\x1b\[[0-9;]*[A-Za-z~]|\x1bO[A-Za-z]|[\s\S]/gu) ?? []) {
+				if (k === "\x1b[200~" || k === "\x1b[201~") {
+					pasting = k === "\x1b[200~";
+					continue;
+				}
+				if (k === "\u0003") {
+					done();
 					console.log("\n  Skipped: Telegram stays as it was. Later: pp setup");
 					process.exit(3); // Ctrl+C skips this step, as during the wait
 				}
-				if (ch === "\r" || ch === "\n") {
-					stdin.off("data", onData);
-					stdin.setRawMode(false);
-					stdin.pause();
-					process.stdout.write(hidden ? (value ? "received\n" : "\n") : `${value}\n`);
+				if ((k === "\r" || k === "\n") && !pasting && !whole) {
+					done();
+					process.stdout.write(hidden ? (value.trim() ? "received\n" : "\n") : `${value}\n`);
 					return resolve(value.trim());
 				}
-				if (ch === "\u007f") value = value.slice(0, -1);
-				else if (ch >= " ") {
-					value += ch;
-					if (!hidden) process.stdout.write(ch);
+				if (k === "\u007f" || k === "\b") value = value.slice(0, -1);
+				else if (k === "\r" || k === "\n") value += "\n";
+				else if (k.length === 1 && k >= " ") {
+					value += k;
+					if (!hidden) process.stdout.write(k);
 				}
 			}
 		};
 		stdin.on("data", onData);
 	});
+
+/** The bot token in what was pasted: BotFather's whole message, or the token alone. */
+export const findToken = (text: string): string | undefined => /\b\d{5,}:[A-Za-z0-9_-]{30,}(?![A-Za-z0-9_-])/.exec(text)?.[0];
 
 /** `pp setup` runs this before the channel starts: it stores the bot's token and lets the first person in. */
 async function setup(): Promise<void> {
@@ -461,16 +482,21 @@ async function setup(): Promise<void> {
 	if (me) console.log(`  ✔ bot @${me.username} is set up`);
 	while (!me) {
 		console.log("  In Telegram, open a chat with @BotFather and send /newbot. Choose a name; BotFather answers with a token.");
-		const tok = await ask("  ? Paste the token (not shown, then Enter; empty to skip): ", true);
-		if (!tok) {
+		const pasted = await ask("  ? Paste the token (not shown, then Enter; empty to skip): ", true);
+		if (!pasted) {
 			console.log("  Skipped: Telegram stays off. Later: pp setup");
 			process.exit(3);
+		}
+		const tok = findToken(pasted);
+		if (!tok) {
+			console.log("  ✘ That is not a bot token. A token is one line like 123456789:AAH…, in BotFather's message: copy it, or the whole message.");
+			continue;
 		}
 		fs.mkdirSync(SECRETS, { recursive: true, mode: 0o700 });
 		fs.writeFileSync(tokenFile, `${tok}\n`, { mode: 0o600 });
 		fs.chmodSync(tokenFile, 0o600);
 		me = await call("getMe", {}, 15_000).catch((err) => {
-			console.log(`  ✘ Telegram does not accept it (${err instanceof TelegramError && err.code === 401 ? "the token is wrong" : (err as Error).message}). Try again.`);
+			console.log(`  ✘ Telegram does not accept it (${err instanceof TelegramError && (err.code === 401 || err.code === 404) ? "the token is wrong" : (err as Error).message}). Try again.`);
 			return undefined;
 		});
 		if (me) console.log(`  ✔ bot @${me.username} answers`);
