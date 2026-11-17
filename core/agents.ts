@@ -2,7 +2,7 @@
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { COMMAND, PRODUCT, SETTINGS_FILE } from "./name.ts";
+import { COMMAND, PRODUCT, SETTINGS_FILE, SLUG } from "./name.ts";
 import { type AgentPaths, agentPaths, home, NAME_MAX, NAME_RE, piDir, privateDir, ROOT } from "./paths.ts";
 import { ensurePort } from "./port.ts";
 
@@ -36,7 +36,7 @@ You are ${name}, a personal agent run by ${PRODUCT}.
 
 - You are one continuous pi session. Your conversation continues across restarts.
 - This folder is your home and your working directory. You can act on the whole machine with the user's permissions.
-- You run in a terminal of Herdr Core. You can open other sessions or helper agents in their own terminals with \`hc\` (\`hc --skill\` explains how). A helper reports back to you with \`pi-personal send ${name} "..." --conversation <where the answer should go>\`.
+- You run in a terminal of Herdr Core. You can open other sessions or helper agents in their own terminals with \`hc\` (\`hc --skill\` explains how). A helper reports back to you with \`pp send ${name} "..." --conversation <where the answer should go>\`.
 - People reach you from the terminal you run in, and through channels (a messaging app, a script). Write ordinary Markdown: each channel shows it the way its service can.
 - Several people may write to you. A message from a channel can start with a line "From: ..." naming who wrote it (a name anyone can choose, and an id that is theirs). Answer the person who wrote. Do not pass one person's words, files or requests on to another unless the owner asked you to. Everything you know is shared by everyone who writes to you: keep that in mind.
 - This file holds your instructions. The user edits it to change who you are and how you work.
@@ -203,14 +203,14 @@ export function channels(agent: Pick<Agent, "settings">, root: string): { name: 
 const homeTag = () => createHash("sha256").update(home()).digest("hex").slice(0, 12);
 
 /** The labels every terminal of this agent carries (agent and channels alike). */
-export const ownLabels = (name: string): Record<string, string> => ({ [`${COMMAND}.agent`]: name, [`${COMMAND}.home`]: homeTag() });
+export const ownLabels = (name: string): Record<string, string> => ({ [`${SLUG}.agent`]: name, [`${SLUG}.home`]: homeTag() });
 
 /** Labels that identify Pi-personal's terminals in Herdr Core. `where` is the label Herdr shows. */
 export function labels(agent: AgentRecord, channel?: string): Record<string, string> {
-	const where = `${COMMAND} / ${agent.name}`;
+	const where = `${SLUG} / ${agent.name}`;
 	return channel
-		? { ...ownLabels(agent.name), [`${COMMAND}.channel`]: channel, where: `${where} / ${channel}` }
-		: { ...ownLabels(agent.name), [`${COMMAND}.role`]: "agent", where };
+		? { ...ownLabels(agent.name), [`${SLUG}.channel`]: channel, where: `${where} / ${channel}` }
+		: { ...ownLabels(agent.name), [`${SLUG}.role`]: "agent", where };
 }
 
-export const terminalName = (agent: string, channel?: string) => (channel ? `${COMMAND}-${agent}_${channel}` : `${COMMAND}-${agent}`); // hc allows a-z 0-9 - _
+export const terminalName = (agent: string, channel?: string) => (channel ? `${SLUG}-${agent}_${channel}` : `${SLUG}-${agent}`); // hc allows a-z 0-9 - _

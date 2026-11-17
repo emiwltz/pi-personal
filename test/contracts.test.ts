@@ -34,6 +34,27 @@ const folder = (name: string) => {
 
 // ---- pi --------------------------------------------------------------------------------------------------------
 
+test("pi: its providers, their sign-in methods, environment variables and default models can be read (pp setup shows them)", async () => {
+	const p = await import("../core/providers.ts");
+	const all = await p.providers();
+	assert.ok(all.length > 10, `pi lists ${all.length} providers`);
+	const anthropic = all.find((x) => x.id === "anthropic");
+	assert.ok(anthropic?.account && anthropic.apiKey, "Anthropic: an account sign-in and an API key");
+	assert.deepEqual(await p.envKeys("openai", { OPENAI_API_KEY: "x" }), ["OPENAI_API_KEY"]);
+	assert.equal(typeof (await p.defaultModel("anthropic")), "string", "pi names a default model for Anthropic");
+});
+
+test("pi: auth check answers in JSON, auth login takes --api-key, and --list-models prints a provider/model table (pp reads them)", () => {
+	const env = { ...t.env, PI_CODING_AGENT_DIR: path.join(t.home, "pi"), PI_TELEMETRY: "0", PI_SKIP_VERSION_CHECK: "1", PI_OFFLINE: "1" };
+	const check = spawnSync(process.execPath, [piCli(), "auth", "check", "--provider", "anthropic", "--json"], { env, encoding: "utf8", timeout: 60_000 });
+	assert.equal(JSON.parse(check.stdout.trim().split("\n").pop() ?? "{}").status, "not_ready");
+	const login = spawnSync(process.execPath, [piCli(), "auth", "login"], { env, encoding: "utf8", timeout: 60_000 });
+	assert.match(`${login.stdout}${login.stderr}`, /pi auth login <provider> \[--api-key\]/);
+	const list = spawnSync(process.execPath, [piCli(), "--list-models"], { env, encoding: "utf8", timeout: 60_000 });
+	assert.match(list.stdout, /^provider\s{2,}model\s{2,}/m);
+	assert.match(list.stdout, /^fake\s{2,}echo-1\s/m);
+});
+
 test("pi: in rpc mode it answers get_state once it has loaded (the runner's sign that pi got through loading)", () => {
 	const r = dry(folder("plain"), ["-ne"]);
 	assert.match(r.stdout, /"command"\s*:\s*"get_state"/);

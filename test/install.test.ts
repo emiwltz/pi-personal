@@ -18,11 +18,12 @@ test("install.sh, doctor, service, uninstall", async () => {
 	// The service manager is replaced by a script that only records its arguments: no real service is ever installed.
 	const fakeManager = path.join(t.dir, "service-manager");
 	fs.writeFileSync(fakeManager, `#!/bin/sh\necho "$@" >> ${t.dir}/service.log\n`, { mode: 0o755 });
-	const env = { ...t.env, PI_PERSONAL_INSTALL_DIR: dest, PI_PERSONAL_BIN_DIR: bin, PI_PERSONAL_SYSTEMCTL: fakeManager, PI_PERSONAL_LAUNCHCTL: fakeManager };
+	const env = { ...t.env, PI_PERSONAL_NO_SETUP: "1", PI_PERSONAL_INSTALL_DIR: dest, PI_PERSONAL_BIN_DIR: bin, PI_PERSONAL_SYSTEMCTL: fakeManager, PI_PERSONAL_LAUNCHCTL: fakeManager };
 	const userHome = path.join(t.dir, "userhome"); // where macOS's LaunchAgents folder goes in this test
 	fs.mkdirSync(userHome, { recursive: true });
 	await run(path.join(ROOT, "install.sh"), [], { env, timeout: 300_000 });
-	const command = path.join(bin, "pi-personal");
+	const command = path.join(bin, "pp");
+	assert.equal(fs.readFileSync(path.join(bin, "pi-personal"), "utf8"), fs.readFileSync(command, "utf8"), "the long name is the same command");
 	assert.ok(fs.existsSync(command));
 	assert.ok(fs.existsSync(path.join(dest, "node_modules", "@earendil-works", "pi-coding-agent")));
 	const p = (...args: string[]) => run(command, args, { env: args[0] === "service" || args[0] === "uninstall" ? { ...env, HOME: userHome } : env, timeout: 120_000 });
@@ -42,7 +43,8 @@ test("install.sh, doctor, service, uninstall", async () => {
 	const unit = mac ? path.join(userHome, "Library", "LaunchAgents", "local.pi-personal.up.plist") : path.join(t.dir, "config", "systemd", "user", "pi-personal.service");
 	const text = fs.readFileSync(unit, "utf8");
 	assert.match(text, mac ? /<key>AbandonProcessGroup<\/key><true\/>/ : /KillMode=process/);
-	assert.match(text, mac ? /<string>up<\/string><string>--if-running<\/string>/ : /ExecStart=.*core\/cli\.ts up --if-running --home/);
+	// The installed copy's service runs its pp command, which finds the Node.js the installer chose even after an update.
+	assert.match(text, mac ? /<string>[^<]*\/pp<\/string><string>up<\/string><string>--if-running<\/string>/ : /ExecStart=\S*\/pp up --if-running --home/);
 	assert.match(fs.readFileSync(path.join(t.dir, "service.log"), "utf8"), mac ? /bootstrap gui\// : /enable --now pi-personal.timer/);
 
 	const live = () => t.hc("ls").terminals.filter((x: { name?: string }) => x.name?.startsWith("pi-personal-"));
@@ -54,6 +56,7 @@ test("install.sh, doctor, service, uninstall", async () => {
 	assert.ok(!fs.existsSync(unit), "the service is removed");
 	assert.match(fs.readFileSync(path.join(t.dir, "service.log"), "utf8"), mac ? /bootout gui\// : /disable --now pi-personal.timer/);
 	assert.ok(!fs.existsSync(command) && !fs.existsSync(dest), "the installed code is removed");
+	assert.ok(!fs.lstatSync(path.join(bin, "pi-personal"), { throwIfNoEntry: false }), "the long name is removed too");
 	assert.ok(fs.existsSync(path.join(folder, "AGENTS.md")), "the agent's folder is kept");
 	assert.ok(fs.existsSync(path.join(t.home, "agents", "main", "sessions")), "the private area is kept without --purge");
 	// With --purge (from the source copy), the private area goes too; the folder still stays.

@@ -5,7 +5,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { type Agent, type AgentRecord, channels, labels, list, load, loadRecord, ownLabels, readSettings, type Settings, terminalName } from "./agents.ts";
 import * as herdr from "./herdr.ts";
-import { COMMAND, ENV } from "./name.ts";
+import { COMMAND, ENV, SLUG } from "./name.ts";
 import { home, ROOT } from "./paths.ts";
 import * as port from "./port.ts";
 import { lockFile, lockHolder, readKeeper, writeKeeper } from "./runner.ts";
@@ -120,7 +120,7 @@ export function up(name: string): UpResult {
 	}
 	// Channels that were turned off in the settings: stop their terminals.
 	for (const t of own(name)) {
-		const ch = t.labels?.[`${COMMAND}.channel`];
+		const ch = t.labels?.[`${SLUG}.channel`];
 		if (ch && !enabled.includes(ch)) {
 			herdr.kill(t.address);
 			herdr.rm(t.address);
@@ -198,7 +198,7 @@ export async function stop(name: string): Promise<string[]> {
 		} catch (err) {
 			if (herdr.get(t.address)?.state === "live") throw err; // it ended meanwhile: that is what was wanted
 		}
-		const ch = t.labels?.[`${COMMAND}.channel`];
+		const ch = t.labels?.[`${SLUG}.channel`];
 		fact(agent, ch ? { type: "stopped", channel: ch } : { type: "stopped" });
 		ended.push(ch ?? "agent");
 	}
@@ -229,7 +229,7 @@ function cleanFinished(agent: AgentRecord): Map<string, string> {
 		const t = herdr.get(x.address);
 		if (!t || !matches(t, want)) continue;
 		const detail = [t.reason, t.signal ? `signal ${t.signal}` : t.exit_code != null ? `exit code ${t.exit_code}` : ""].filter(Boolean).join(", ");
-		why.set(t.labels?.[`${COMMAND}.channel`] ?? "", `its terminal ended (${detail || "no reason given"})`);
+		why.set(t.labels?.[`${SLUG}.channel`] ?? "", `its terminal ended (${detail || "no reason given"})`);
 		herdr.rm(t.address);
 	}
 	return why;

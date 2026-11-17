@@ -11,7 +11,7 @@ The port is the only way into and out of a Pi-personal agent. Every channel, scr
   events.jsonl      everything the agent says and does, one JSON object per line; it only grows
 ```
 
-`pi-personal port <agent>` prints the folder. A program started by Pi-personal as a channel receives it in `PI_PERSONAL_PORT`.
+`pp port <agent>` prints the folder. A program started by Pi-personal as a channel receives it in `PI_PERSONAL_PORT`.
 
 **Trust.** Anyone who can write to the port can drive the agent, and the agent can do anything your user account can do. The port is protected only by file permissions: it lives in Pi-personal's private area (mode `0700`), readable by your user alone, the same trust boundary as Herdr Core's own socket. Pi-personal adds no authentication on top. Deciding who may talk to an agent is each channel's job.
 
@@ -58,7 +58,7 @@ Files whose name starts with a dot, and anything that is not a regular file, are
 
 **Position.** An event's position is the byte offset where its line starts. To follow the agent, read from the offset where you stopped, handle each complete line (one that ends with a newline), and remember the offset after the last line you handled. After a restart, start from there: you will see nothing twice and miss nothing. A new reader starts at the current end of the file, to see only what comes next.
 
-**Keeping it small.** Pi-personal never cuts or moves the file (it grows by about a kilobyte per message). To start a new one, stop the agent (`pi-personal stop`, which stops its channels too) and move `events.jsonl` aside: a reader whose offset is past the end of the file reads the new file from its start.
+**Keeping it small.** Pi-personal never cuts or moves the file (it grows by about a kilobyte per message). To start a new one, stop the agent (`pp stop`, which stops its channels too) and move `events.jsonl` aside: a reader whose offset is past the end of the file reads the new file from its start.
 
 ### Event types
 
@@ -100,10 +100,10 @@ An ability joins the port itself (as a new optional field or event) only once su
 ## The smallest client
 
 ```sh
-pi-personal send main "hello"                         # submit, print the id
-pi-personal send main "hello" --wait                  # submit, wait, print the answer (exit 1 on an error)
-pi-personal send main "the build is green" --conversation telegram:4242   # the answer goes to that Telegram chat
-pi-personal follow main                               # print events as they arrive
+pp send main "hello"                         # submit, print the id
+pp send main "hello" --wait                  # submit, wait, print the answer (exit 1 on an error)
+pp send main "the build is green" --conversation telegram:4242   # the answer goes to that Telegram chat
+pp follow main                               # print events as they arrive
 ```
 
 Anything that can run a command can talk to an agent this way: a cron job, a script, another agent.

@@ -96,7 +96,7 @@ test("Telegram tells the sender about the error, once, quoting nothing it was no
 	assert.match(told[0].text, /fake refusal: from the phone/);
 });
 
-test("pi-personal chat shows the error to the person who typed", async () => {
+test("pp chat shows the error to the person who typed", async () => {
 	const child = spawn(process.execPath, [path.join(ROOT, "channels", "local", "chat.ts")], { env: { ...t.env, PI_PERSONAL_PORT: P() }, stdio: ["pipe", "pipe", "pipe"] });
 	let out = "";
 	child.stdout.on("data", (d) => (out += d));

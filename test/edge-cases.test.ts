@@ -459,7 +459,7 @@ test("pi-personal.json: a model that is not a string is refused with its reason;
 		const r = await t.cli("restart", "main");
 		assert.equal(r.code, 1);
 		assert.match(r.stderr, /model must be a string.*nothing was stopped/);
-		// pi-personal up on a running agent whose settings cannot be read: it runs, and that is what up says.
+		// pp up on a running agent whose settings cannot be read: it runs, and that is what up says.
 		const up = await t.cli("up");
 		assert.equal(up.code, 0, up.stdout + up.stderr);
 		assert.match(up.stdout, /main: skipped \(running; its settings cannot be read now/);

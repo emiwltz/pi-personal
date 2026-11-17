@@ -97,9 +97,9 @@ export default function bridge(pi: ExtensionAPI) {
 		safeMode = process.env.PI_PERSONAL_SAFE_MODE ? JSON.parse(process.env.PI_PERSONAL_SAFE_MODE) : null;
 	} catch {}
 	const restarted = process.env.PI_PERSONAL_RESTARTED || "";
-	const stopped = path.join(path.dirname(portDir), "stopped"); // written by "pi-personal stop" before it stops pi
-	const wasStopped = path.join(path.dirname(portDir), "was-stopped"); // "pi-personal start" after a stop: never resume
-	const lastErrorFile = path.join(path.dirname(portDir), "last-error.json"); // read by "pi-personal status"
+	const stopped = path.join(path.dirname(portDir), "stopped"); // written by "pp stop" before it stops pi
+	const wasStopped = path.join(path.dirname(portDir), "was-stopped"); // "pp start" after a stop: never resume
+	const lastErrorFile = path.join(path.dirname(portDir), "last-error.json"); // read by "pp status"
 	port.ensurePort(portDir);
 	// Writing an event must never kill pi: what cannot be written waits and is written later.
 	const emit = port.emitter(portDir, (m) => process.stderr.write(`[pi-personal] ${m}\n`));

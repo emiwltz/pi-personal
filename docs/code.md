@@ -10,14 +10,17 @@ Pi-personal is TypeScript run directly by Node.js 22 (type stripping: no build s
 | `core/runner.ts` | pi, Herdr | Runs in each Pi-personal terminal of Herdr Core and keeps one program alive there: an agent's pi, or one of its channels. Restarts with backoff, gives up after repeated failures and retries every hour, safe mode (`dryStart`, `startFailure`), the startup watchdog, the lock (`runner.lock`), and `keeper.json`, what it knows. |
 | `core/port.ts` | port | The file protocol: validate and submit a message, list and read the inbox, take or reject a file, append events (`append`, and `emitter`, which never throws), read events from a byte offset (`events`, `follow`). |
 | `core/control.ts` | Herdr | Start, stop, restart and inspect agents and channels in Herdr Core: `up` (idempotent), `start` (watches until pi is ready), `stop`, `status` (reads `keeper.json`, `last-error.json` and Herdr Core). Finds its terminals by labels, never by guessing. |
-| `core/herdr.ts` | Herdr | The few `hc` verbs Pi-personal uses (`run`, `get`, `ls`, `kill`, `rm`), and whether a Herdr Core is running without starting one. |
+| `core/herdr.ts` | Herdr | Finding, installing (Herdr's own installer), updating and starting Herdr Core, and the few `hc` verbs Pi-personal uses (`run`, `get`, `ls`, `kill`, `rm`), and whether a Herdr Core is running without starting one. |
 | `core/agents.ts` | — | An agent on disk: its name, its visible folder (`AGENTS.md`, `pi-personal.json`), its record in the private area; reading and editing settings; the labels and names of its terminals. |
-| `core/cli.ts` | — | The `pi-personal` command: argument parsing, human and JSON output, `send --wait`, and the dispatch to the modules above. |
+| `core/cli.ts` | — | The `pp` command: argument parsing (an agent's name can be left out when there is one), human and JSON output, `send --wait`, `stop --all`, `update`, and the dispatch to the modules above. |
+| `core/welcome.ts` | — | `pp` alone (each agent and the next thing to do; it never starts Herdr Core) and `pp setup`, the guide: Herdr Core found, installed or started; a provider; the agent; hello; channels and the login service. |
+| `core/providers.ts` | pi | Model providers the way pi offers them: pi's own list and order, its sign-in (`pi auth login`), its credentials file; keys already on the machine, offered on a yes. |
+| `core/ask.ts` | — | Questions in the terminal, without a dependency: a list that narrows as you type, yes or no, text, a secret; plain lines when there is no terminal (tests). |
 | `core/setup.ts` | — | `doctor`, the optional login service (systemd user timer or launchd agent), `uninstall`. |
 | `core/paths.ts`, `core/name.ts` | — | Where things live, and the product's names (the core's code takes them from `name.ts`). |
-| `channels/local/chat.ts` | channel | `pi-personal chat`: a channel of a few dozen lines, written on the port alone. The worked example of [write-a-channel.md](write-a-channel.md). |
-| `channels/telegram/` | channel | The Telegram channel and its Markdown-to-HTML formatter. It imports nothing from `core/`. See [its README](../channels/telegram/README.md). |
-| `install.sh` | — | Copies the code to `~/.local/share/pi-personal`, installs pi there, writes the `pi-personal` command. |
+| `channels/local/chat.ts` | channel | `pp chat`: a channel of a few dozen lines, written on the port alone. The worked example of [write-a-channel.md](write-a-channel.md). |
+| `channels/telegram/` | channel | The Telegram channel, its own `setup` (run by `pp setup`), and its Markdown-to-HTML formatter. It imports nothing from `core/`. See [its README](../channels/telegram/README.md). |
+| `install.sh` | — | The installer (`curl … \| sh`, or from a copy of the source): downloads Pi-personal, and an official Node.js if the machine has none recent enough; installs pi; writes the `pp` command; offers to fix the `PATH`; runs `pp setup`. |
 
 ## A message, from a channel to its answer
 
@@ -28,13 +31,13 @@ Pi-personal is TypeScript run directly by Node.js 22 (type stripping: no build s
 5. **The run ends.** `agent_settled` calls `close`: it emits `settled` for the message (with `error` when it got no full answer), then writes the `pi-personal.settled` mark into the session. The bridge then delivers the next message.
 6. **The channel reads** `events.jsonl` from its saved byte offset and routes each reply by the prefix of its `conversation`.
 
-If pi dies at any point, the message is either still in the inbox (handed again) or in the session (recognised by its id at the next start). At the next start, `session_start` reads the open run: work cut off by a crash is resumed with one visible note; work stopped on purpose (`pi-personal stop`, which writes `stopped`, read by the bridge's signal handler, or `was-stopped` at the next start) is closed and its sender told.
+If pi dies at any point, the message is either still in the inbox (handed again) or in the session (recognised by its id at the next start). At the next start, `session_start` reads the open run: work cut off by a crash is resumed with one visible note; work stopped on purpose (`pp stop`, which writes `stopped`, read by the bridge's signal handler, or `was-stopped` at the next start) is closed and its sender told.
 
 ## Keeping it alive
 
-- `pi-personal start` → `control.start` → `control.up` launches the runner in a Herdr Core terminal (`hc run`, through `/usr/bin/env` so the runner gets the caller's `PATH` and private area), then watches the events for `started` (ready), `safe_mode` or `failed`.
+- `pp start` → `control.start` → `control.up` launches the runner in a Herdr Core terminal (`hc run`, through `/usr/bin/env` so the runner gets the caller's `PATH` and private area), then watches the events for `started` (ready), `safe_mode` or `failed`.
 - The runner (`runner.runForever`) takes `runner.lock`, then loops: start pi with the bridge, watch it get ready, and when it ends decide why (a quit, a crash, an extension that breaks loading, pi itself unable to start) and what to do (start again at once, after a backoff, in safe mode, or give up and retry in an hour). It writes what it knows to `keeper.json`.
-- `pi-personal status` reads `keeper.json`, `last-error.json` (written by the bridge) and Herdr Core's view of the terminal: never the event history.
+- `pp status` reads `keeper.json`, `last-error.json` (written by the bridge) and Herdr Core's view of the terminal: never the event history.
 
 ## Conventions
 
@@ -57,6 +60,8 @@ The fake model answers `echo: <text>`, and obeys a few words in the last user me
 | `crash-and-terminal.test.ts`, `keeper.test.ts`, `lifecycle.test.ts` | crashes, the keeper's rules, safe mode, stop and start |
 | `durability.test.ts`, `edge-cases.test.ts`, `regressions.test.ts` | full disks, bursts, races, and every defect found so far |
 | `settings.test.ts`, `cli.test.ts`, `install.test.ts` | settings, the command line, install and uninstall |
+| `setup.test.ts` | `pp` alone and `pp setup`, answered on standard input |
+| `fresh-install.manual.ts` | not in `npm test`: a fresh machine, simulated (empty home, system commands only), the real installer in a real terminal, `pp setup` answered key by key; it downloads Node.js and Herdr Core |
 | `telegram.test.ts` | the Telegram channel |
 | `contracts.test.ts` | the behaviours of pi and Herdr Core the core relies on; run it first after updating either |
 

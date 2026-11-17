@@ -3,7 +3,7 @@
 // It is also the worked example of docs/write-a-channel.md. It imports nothing from Pi-personal's core:
 // everything it does is described in docs/port.md.
 //
-//   PI_PERSONAL_PORT=$(pi-personal port main) node channels/local/chat.ts      (or simply: pi-personal chat main)
+//   PI_PERSONAL_PORT=$(pp port main) node channels/local/chat.ts      (or simply: pp chat main)
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as readline from "node:readline";

@@ -6,9 +6,9 @@
 // folder, outside the agent's working folder). With no list it obeys nobody. Unlisted senders are recorded, never added.
 //
 //   run (started by Pi-personal's keeper):  node telegram.ts
-//   who wrote and is not listed:        pi-personal channel <agent> telegram who
-//   add someone to the list:            pi-personal channel <agent> telegram allow <user id>
-//   check the token and the list:       pi-personal channel <agent> telegram check   (pi-personal doctor runs it)
+//   who wrote and is not listed:        pp channel <agent> telegram who
+//   add someone to the list:            pp channel <agent> telegram allow <user id>
+//   check the token and the list:       pp channel <agent> telegram check   (pp doctor runs it)
 //
 // Everything specific to Telegram lives here: long polling, the guest list, Markdown shown as Telegram formatting
 // (format.ts), replies quoting the message they answer, "typing..." while the agent works, errors told to the
@@ -85,7 +85,7 @@ function token(): string {
 	try {
 		return fs.readFileSync(file, "utf8").trim();
 	} catch {
-		log(`no bot token: store it with "pi-personal secret set ${env("AGENT")} telegram-token" (it is read from standard input)`);
+		log(`no bot token: store it with "pp secret set ${env("AGENT")} telegram-token" (it is read from standard input)`);
 		process.exit(2);
 	}
 }
@@ -193,7 +193,7 @@ function recordStranger(m: any): void {
 	const file = path.join(STATE, "unlisted.jsonl");
 	const seen = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
 	if (!seen.includes(`"id":${who.id},`)) fs.appendFileSync(file, `${JSON.stringify({ ...who, at: new Date().toISOString() })}\n`, { mode: 0o600 });
-	log(`ignored a message from an unlisted sender: ${who.id}${who.username ? ` (@${who.username})` : ""}. To let them in: pi-personal channel ${env("AGENT")} telegram allow ${who.id}`);
+	log(`ignored a message from an unlisted sender: ${who.id}${who.username ? ` (@${who.username})` : ""}. To let them in: pp channel ${env("AGENT")} telegram allow ${who.id}`);
 }
 
 async function handle(u: any, allowed: string[]): Promise<void> {
@@ -250,7 +250,7 @@ async function receive(): Promise<never> {
 			}
 		} catch (err) {
 			if (err instanceof TelegramError && err.code === 401) {
-				log(`Telegram refuses the bot token: store a valid one (pi-personal secret set ${env("AGENT")} telegram-token), then: pi-personal restart ${env("AGENT")}`);
+				log(`Telegram refuses the bot token: store a valid one (pp secret set ${env("AGENT")} telegram-token), then: pp restart ${env("AGENT")}`);
 				process.exit(3);
 			}
 			const wait = err instanceof TelegramError && err.retryAfter ? err.retryAfter * 1000 : Math.min(60_000, 1000 * 2 ** failures++);
@@ -406,6 +406,126 @@ async function send(): Promise<never> {
 	}
 }
 
+// ---- setup: a bot token, then the first person to let in ------------------------------------------------------
+
+const ask = (q: string, hidden = false): Promise<string> =>
+	new Promise((resolve) => {
+		process.stdout.write(q);
+		const stdin = process.stdin;
+		if (!stdin.isTTY) {
+			let buf = "";
+			const onData = (c: Buffer) => {
+				buf += c.toString("utf8");
+				const nl = buf.indexOf("\n");
+				if (nl < 0) return;
+				stdin.off("data", onData);
+				stdin.pause();
+				process.stdout.write("\n");
+				resolve(buf.slice(0, nl).trim());
+			};
+			stdin.on("data", onData).resume();
+			return;
+		}
+		stdin.setRawMode(true);
+		stdin.resume();
+		let value = "";
+		const onData = (b: Buffer) => {
+			for (const ch of b.toString("utf8")) {
+				if (ch === "\u0003") {
+					stdin.setRawMode(false);
+					console.log("\n  Skipped: Telegram stays as it was. Later: pp setup");
+					process.exit(3); // Ctrl+C skips this step, as during the wait
+				}
+				if (ch === "\r" || ch === "\n") {
+					stdin.off("data", onData);
+					stdin.setRawMode(false);
+					stdin.pause();
+					process.stdout.write(hidden ? (value ? "received\n" : "\n") : `${value}\n`);
+					return resolve(value.trim());
+				}
+				if (ch === "\u007f") value = value.slice(0, -1);
+				else if (ch >= " ") {
+					value += ch;
+					if (!hidden) process.stdout.write(ch);
+				}
+			}
+		};
+		stdin.on("data", onData);
+	});
+
+/** `pp setup` runs this before the channel starts: it stores the bot's token and lets the first person in. */
+async function setup(): Promise<void> {
+	const tokenFile = path.join(SECRETS, "telegram-token");
+	let me: any;
+	if (fs.existsSync(tokenFile)) me = await call("getMe", {}, 15_000).catch(() => undefined);
+	if (me) console.log(`  ✔ bot @${me.username} is set up`);
+	while (!me) {
+		console.log("  In Telegram, open a chat with @BotFather and send /newbot. Choose a name; BotFather answers with a token.");
+		const tok = await ask("  ? Paste the token (not shown, then Enter; empty to skip): ", true);
+		if (!tok) {
+			console.log("  Skipped: Telegram stays off. Later: pp setup");
+			process.exit(3);
+		}
+		fs.mkdirSync(SECRETS, { recursive: true, mode: 0o700 });
+		fs.writeFileSync(tokenFile, `${tok}\n`, { mode: 0o600 });
+		fs.chmodSync(tokenFile, 0o600);
+		me = await call("getMe", {}, 15_000).catch((err) => {
+			console.log(`  ✘ Telegram does not accept it (${err instanceof TelegramError && err.code === 401 ? "the token is wrong" : (err as Error).message}). Try again.`);
+			return undefined;
+		});
+		if (me) console.log(`  ✔ bot @${me.username} answers`);
+	}
+	if (guests()?.length) {
+		console.log(`  ✔ allowed: ${guests()!.join(", ")}`);
+		return;
+	}
+	console.log(`  Now write any message to @${me.username} from your own Telegram account. Waiting... (Ctrl+C to skip this step)`);
+	const skip = () => {
+		console.log("\n  Skipped: nobody allowed yet. Later: write to the bot, then pp channel telegram who");
+		process.exit(3);
+	};
+	process.on("SIGINT", skip);
+	// The channel is not running yet, so this is the only reader. It never passes an offset, which would confirm the
+	// updates to Telegram: once the channel starts, it reads the same message, and the agent answers it. Messages
+	// written before this step began are not offered: only someone writing now can be let in.
+	const since = Math.floor(Date.now() / 1000) - 5;
+	const until = Date.now() + 10 * 60_000;
+	const seen = new Set<number>();
+	let told = "";
+	while (Date.now() < until) {
+		let ups: any[] = [];
+		try {
+			ups = await call("getUpdates", { timeout: 25, allowed_updates: ["message"] }, 35_000);
+		} catch (err) {
+			const why =
+				err instanceof TelegramError && err.code === 409 ? "another program reads this bot, or a webhook is set (Telegram allows one reader)" : (err as Error).message;
+			if (why !== told) console.log(`  ! Telegram: ${why}; trying again...`);
+			told = why;
+			await sleep(err instanceof TelegramError && err.retryAfter ? err.retryAfter * 1000 : 5000);
+			continue;
+		}
+		const fresh = ups.filter((u) => !seen.has(u.update_id));
+		if (!fresh.length) await sleep(ups.length ? 2000 : 0); // only old ones pending: Telegram answers at once, so wait
+		for (const u of fresh) {
+			seen.add(u.update_id);
+			const m = u.message;
+			if (!m?.from || m.from.is_bot || m.chat?.type !== "private" || (m.date ?? 0) < since) continue;
+			const who = [m.from.first_name, m.from.last_name].filter(Boolean).join(" ") || "someone";
+			console.log(`  ✔ ${who}${m.from.username ? ` (@${m.from.username})` : ""}, Telegram user ${m.from.id}, wrote: "${String(m.text ?? "(an attachment)").slice(0, 60)}"`);
+			const yes = (await ask(`  ? Is that you? Let them talk to your agent? [y/N] `)).toLowerCase();
+			if (/^(y|yes|o|oui)$/.test(yes)) {
+				writeGuests([...new Set([...(guests() ?? []), String(m.from.id)])]);
+				console.log(`  ✔ Telegram user ${m.from.id} is allowed. Others who write are refused until you allow them: pp channel telegram who`);
+				process.off("SIGINT", skip);
+				return;
+			}
+			console.log("  Not allowed. Waiting for another message... (Ctrl+C to skip this step)");
+		}
+	}
+	console.log("  Nobody was allowed within 10 minutes. Later: write to the bot, then pp channel telegram who, and allow <id>");
+	process.exit(3);
+}
+
 // ---- commands -------------------------------------------------------------------------------------------------
 
 async function main(args: string[]): Promise<void> {
@@ -419,7 +539,7 @@ async function main(args: string[]): Promise<void> {
 		return;
 	}
 	if (cmd === "allow" || cmd === "deny") {
-		if (!arg || !/^\d+$/.test(arg)) throw new Error(`usage: pi-personal channel <agent> telegram ${cmd} <numeric Telegram user id>`);
+		if (!arg || !/^\d+$/.test(arg)) throw new Error(`usage: pp channel <agent> telegram ${cmd} <numeric Telegram user id>`);
 		const now = guests();
 		if (!now) throw new Error(`the guest list ${allowFile()} cannot be read; fix or delete it first`);
 		const ids = writeGuests(cmd === "allow" ? [...new Set([...now, arg])] : now.filter((i) => i !== arg));
@@ -427,12 +547,12 @@ async function main(args: string[]): Promise<void> {
 		return;
 	}
 	if (cmd === "check") {
-		// Run by `pi-personal doctor`: one line per check, "ok", "note" or "FAIL", then the text.
+		// Run by `pp doctor`: one line per check, "ok", "note" or "FAIL", then the text.
 		let tok = "";
 		try {
 			tok = fs.readFileSync(path.join(SECRETS, "telegram-token"), "utf8").trim();
 		} catch {}
-		if (!tok) console.log(`FAIL  bot token missing: pi-personal secret set ${env("AGENT")} telegram-token`);
+		if (!tok) console.log(`FAIL  bot token missing: pp secret set ${env("AGENT")} telegram-token`);
 		else
 			try {
 				const me = await call("getMe", {}, 10_000);
@@ -443,10 +563,11 @@ async function main(args: string[]): Promise<void> {
 			}
 		const allow = guests();
 		if (!allow) console.log(`FAIL  the guest list ${allowFile()} cannot be read`);
-		else console.log(allow.length ? `ok    guest list: ${allow.length} allowed` : `note  nobody allowed yet (deny by default): write to the bot, then pi-personal channel ${env("AGENT")} telegram who`);
+		else console.log(allow.length ? `ok    guest list: ${allow.length} allowed` : `note  nobody allowed yet (deny by default): write to the bot, then pp channel ${env("AGENT")} telegram who`);
 		return;
 	}
-	if (cmd) throw new Error(`unknown command "${cmd}": use who, allow <id>, deny <id> or check`);
+	if (cmd === "setup") return setup();
+	if (cmd) throw new Error(`unknown command "${cmd}": use setup, who, allow <id>, deny <id> or check`);
 	fs.mkdirSync(STATE, { recursive: true, mode: 0o700 });
 	state = loadState();
 	if (state.events === undefined) {

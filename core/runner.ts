@@ -1,7 +1,7 @@
 // The runner: lives in a Pi-personal terminal of Herdr Core, runs one program (an agent's pi, or a channel),
 // and brings it back when it ends. It keeps the restart rules (docs/decisions/0002-keeper.md):
 // backoff, give up after 5 quick failures, try again every hour, safe mode for in-agent extensions.
-// What it knows (ready, safe mode, failed, last restart) it keeps in keeper.json, which "pi-personal status" reads.
+// What it knows (ready, safe mode, failed, last restart) it keeps in keeper.json, which "pp status" reads.
 import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -285,7 +285,7 @@ function releaseLock(file: string): void {
 	} catch {}
 }
 
-/** What the keeper knows about its program. "pi-personal status" reads it: nothing to search for in the events. */
+/** What the keeper knows about its program. "pp status" reads it: nothing to search for in the events. */
 export interface KeeperState {
 	running: boolean; // a runner keeps it (false once it was stopped on request)
 	pid?: number;

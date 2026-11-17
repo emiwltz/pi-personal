@@ -14,47 +14,51 @@ import { channelProgram, checkExtension, checkModel, dryStart, extensionPath, ex
 
 const VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).version as string;
 
-const HELP = `${PRODUCT} ${VERSION}: personal agents that live in Herdr Core and answer on any channel.
+const HELP = `${PRODUCT} ${VERSION}: your own agent, living in Herdr Core, reachable from anywhere.
 
-Usage: ${COMMAND} <command> [options]
+Usage: ${COMMAND} [command] [agent] [options]          with one agent, its name can be left out
 
-Agents
-  init <name> [folder] --model <provider/id>   create an agent (or adopt a folder copied from elsewhere)
-  start <name>                                 start it and its channels; says when pi is ready
-  stop <name>                                  stop it and its channels, and keep it stopped
-  restart <name>                               stop and start again (also leaves safe mode)
-  status [name]                                what each agent and channel is doing, and why
-  attach <name>                                take over the agent's terminal (ctrl+\\ to leave)
-  up [--if-running]                            start every agent that should run (the login service runs this;
-                                               --if-running: only if Herdr Core already runs)
+Everyday
+  ${COMMAND}                              how your agent is doing, and what to do next
+  chat [agent]                    talk to it here (Ctrl+D to leave)
+  send [agent] "<text>" [--wait]  send one message; --wait prints the answer
+  attach [agent]                  watch it work in its terminal, or take over (ctrl+\\ to leave)
+  status [agent]                  what it and its channels are doing, and why
 
-Messages
-  send <name> "<text>" [--wait] [--conversation <c>] [--id <id>] [--timeout <s>]
-                                               quote the text (or put it after --); the answer goes to the
-                                               conversation, which a channel routes (default: cli)
-  follow <name>                                print the agent's events as they come
-  chat <name>                                  talk to the agent here (the local channel)
+Manage
+  setup                           set everything up, step by step (safe to run again)
+  start [agent] | --all           start it and its channels
+  stop [agent] | --all            stop it (--all: every agent, then Herdr Core unless it runs other programs)
+  restart [agent]                 stop and start again (also leaves safe mode)
+  login [provider]                connect a model provider, shared by all agents
+  models [search]                 the models you can use
+  channel add|remove [agent] <channel>
+                                  turn a channel on or off (Telegram ships with ${PRODUCT})
+  channel [agent] <channel> <command...>
+                                  a channel's own commands (Telegram: who, allow <id>, deny <id>, check)
+  service install|uninstall|status
+                                  bring your agents back by themselves (at login and every 5 minutes)
+  update                          install the newest ${PRODUCT}, with the pi it was tested with
+  doctor                          check the installation and every agent
+  uninstall [--purge]             remove ${PRODUCT} (--purge: conversations and secrets too)
 
-Setup
-  login <provider> [--api-key] [--no-browser]  sign in to a model provider (shared by all agents)
-  models [search]                              list the models you can use with --model
-  pi <args...>                                 run Pi-personal's own pi with its settings (packages, config...)
-  secret set <name> <key>                      store a secret for an agent's channels (typed or piped, never shown)
-  channel add <name> <channel> [-- <command...>]
-                                               turn a channel on (a shipped one, or your own program after --)
-  channel remove <name> <channel>              turn it off
-  channel <name> <channel> <command...>        a channel's own commands (Telegram: who, allow <id>, deny <id>, check)
-  ext check <name> [extension]                 the agent's extensions (<folder>/.pi/extensions/) and whether they load
-  service install|uninstall|status             start agents when you log in (optional)
-  doctor                                       check the installation
-  log <name>                                   the keeper's log for this agent
-  port <name>                                  print the folder of the agent's port
-  uninstall [--purge]                          stop everything and remove the service (--purge: the private area too)
+Advanced
+  init <agent> [folder] --model <provider/id>
+                                  create an agent without the guide (or adopt a folder copied from elsewhere)
+  follow [agent]                  print everything it does, as it happens
+  log [agent]                     the keeper's log: every start, exit and restart, and why
+  secret set [agent] <key>        store a secret for its channels (typed or piped, never shown)
+  ext check [agent] [extension]   its extensions (<folder>/.pi/extensions/) and whether pi loads them
+  pi <args...>                    ${PRODUCT}'s own pi, with the settings all agents share
+  send ... --conversation <c> --id <id> --timeout <s>
+                                  send on behalf of a channel (the answer goes to that conversation)
+  up [--if-running]               start every agent that should run (the login service runs this)
+  port [agent]                    the folder of its port, for a channel of your own
 
 Options: --json (machine-readable output), --home <dir> (another private area), -h, --version.`;
 
 const VALUE_OPTIONS = ["model", "id", "timeout", "home", "conversation"];
-const FLAGS = ["json", "wait", "if-running", "purge", "help", "version"];
+const FLAGS = ["json", "wait", "if-running", "purge", "help", "version", "all"];
 const PASSTHROUGH = ["login", "pi", "channel", "_run"]; // their options belong to the program they run
 
 function parse(argv: string[]) {
@@ -95,6 +99,19 @@ const out = (json: boolean, value: unknown, human: () => string) => console.log(
 function need(v: string | undefined, what: string): string {
 	if (!v) throw new UsageError(`missing ${what}. "${COMMAND} help" lists the commands`);
 	return v;
+}
+/** The agent a command is about: the one named, or the only one there is. */
+function agentName(given: string | undefined): string {
+	if (given) return given;
+	const all = agents.list();
+	if (all.length === 1) return all[0];
+	if (!all.length) throw new UsageError(`no agent yet: ${COMMAND} setup`);
+	throw new UsageError(`which agent? ${all.join(", ")} (for example: ${COMMAND} <command> ${all[0]})`);
+}
+/** Split "[agent] <rest...>": the first word is the agent if one has that name, else the only agent is meant. */
+function agentAnd(words: string[]): [string, string[]] {
+	if (words.length && agents.list().includes(words[0])) return [words[0], words.slice(1)];
+	return [agentName(undefined), words];
 }
 const tilde = (p: string) => (process.env.HOME && p.startsWith(`${process.env.HOME}/`) ? `~${p.slice(process.env.HOME.length)}` : p);
 
@@ -295,6 +312,90 @@ async function startCmd(name: string, json: boolean, restart = false): Promise<n
 	return r.ready === false ? 1 : 0;
 }
 
+/** `update`: the newest Pi-personal from GitHub, through its own installer (downloaded whole before it runs), then
+ * the agents that were running are restarted by the new command, with the Node.js it now uses (their conversations
+ * continue), and the login service is rewritten to match. PI_PERSONAL_SOURCE (a folder) installs that copy instead. */
+async function update(json: boolean): Promise<number> {
+	const marker = path.join(ROOT, ".installed");
+	if (!fs.existsSync(marker)) throw new UsageError(`this ${PRODUCT} runs from a source folder (${ROOT}), not an installed copy: update it with git pull, then ./install.sh`);
+	const command = fs.readFileSync(marker, "utf8").split("\n")[0].trim();
+	const repo = /github\.com\/([^/]+\/[^/.]+)/.exec(JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).repository?.url ?? "")?.[1] ?? "emiwltz/pi-personal";
+	const source = process.env[`${ENV}_SOURCE`];
+	const quote = (p: string) => `'${p.replace(/'/g, "'\\''")}'`;
+	const script =
+		source && fs.existsSync(path.join(source, "install.sh"))
+			? `sh ${quote(path.join(source, "install.sh"))}`
+			: `t=$(mktemp) && curl -fsSL --proto '=https' https://raw.githubusercontent.com/${repo}/main/install.sh -o "$t" && sh "$t"; s=$?; rm -f "$t"; exit $s`;
+	const running = agents.list().filter((n) => {
+		try {
+			return !!control.find(agents.loadRecord(n));
+		} catch {
+			return false;
+		}
+	});
+	const { serviceInstalled } = await import("./setup.ts");
+	const service = serviceInstalled();
+	const env = { ...process.env, [`${ENV}_NO_SETUP`]: "1", [`${ENV}_UPDATING`]: "1", [`${ENV}_INSTALL_DIR`]: ROOT, [`${ENV}_BIN_DIR`]: path.dirname(command) };
+	const r = spawnSync("sh", ["-c", script], { stdio: json ? ["ignore", "ignore", "inherit"] : "inherit", env });
+	if (r.status !== 0) {
+		console.error(`${COMMAND}: the update failed; ${PRODUCT} is unchanged`);
+		return 1;
+	}
+	// The new command, not this process: the Node.js this one runs may be gone (the installer may use another now).
+	const now = spawnSync(command, ["--version", "--json"], { encoding: "utf8", env: process.env });
+	const to = (() => {
+		try {
+			return JSON.parse(now.stdout).version as string;
+		} catch {
+			return "?";
+		}
+	})();
+	const restarted: string[] = [];
+	const failed: string[] = [];
+	for (const n of running) (spawnSync(command, ["restart", n], { stdio: json ? "ignore" : "inherit", env: process.env }).status === 0 ? restarted : failed).push(n);
+	if (service) spawnSync(command, ["service", "install"], { stdio: "ignore", env: process.env });
+	out(json, { from: VERSION, to, restarted, failed }, () =>
+		[`${PRODUCT} ${VERSION} → ${to}`, ...(restarted.length ? [`restarted ${restarted.join(", ")} (conversations continue)`] : []), ...(failed.length ? [`could not restart ${failed.join(", ")}: ${COMMAND} status`] : [])].join("\n"),
+	);
+	return failed.length ? 1 : 0;
+}
+
+/** `stop --all`: every agent and its channels, then Herdr Core itself, unless it runs something else too. Herdr Core
+ * not running: nothing runs, and every agent is marked stopped without starting it (any hc command would). */
+async function stopAll(json: boolean): Promise<number> {
+	const stopped: Record<string, string[] | string> = {};
+	const running = await herdr.isRunning();
+	for (const name of agents.list())
+		try {
+			if (running) stopped[name] = await control.stop(name);
+			else {
+				fs.writeFileSync(agents.loadRecord(name).paths.stopped, `${new Date().toISOString()}\n`);
+				stopped[name] = [];
+			}
+		} catch (err) {
+			stopped[name] = `could not stop: ${(err as Error).message}`;
+		}
+	const trouble = Object.values(stopped).some((v) => typeof v === "string");
+	let herdrCore = "not running";
+	if (running) {
+		const others = herdr.ls({});
+		if (trouble) herdrCore = "kept running: an agent could not be stopped";
+		else if (others.length) herdrCore = `kept running: it also runs ${others.length} other program${others.length > 1 ? "s" : ""} (${others.map((t) => t.name ?? t.address).join(", ")})`;
+		else {
+			herdr.stopServer();
+			herdrCore = "stopped";
+		}
+	}
+	out(json, { stopped, herdrCore }, () =>
+		[
+			...Object.entries(stopped).map(([n, e]) => (typeof e === "string" ? `${n}: ${e}` : e.length ? `${n}: stopped ${e.join(", ")}` : `${n}: was not running; it stays stopped`)),
+			`Herdr Core: ${herdrCore}`,
+			`To start again: ${COMMAND} start --all`,
+		].join("\n"),
+	);
+	return trouble ? 1 : 0;
+}
+
 const editSettings = (agent: agents.AgentRecord, change: (s: agents.Settings) => void) => agents.editSettings(agent.folder, change);
 
 async function main(argv: string[]): Promise<number> {
@@ -311,9 +412,13 @@ async function main(argv: string[]): Promise<number> {
 		out(json, { version: VERSION, pi, herdrCore: hc, node: process.versions.node }, () => `${PRODUCT} ${VERSION} (pi ${pi}, Herdr Core ${hc}, Node ${process.versions.node})`);
 		return 0;
 	}
-	if (opt.help || cmd === undefined || cmd === "help") {
+	if (opt.help || cmd === "help") {
 		console.log(HELP);
 		return 0;
+	}
+	if (cmd === undefined) {
+		const { overview } = await import("./welcome.ts");
+		return overview(VERSION);
 	}
 	switch (cmd) {
 		case "init": {
@@ -341,13 +446,28 @@ async function main(argv: string[]): Promise<number> {
 		}
 		case "status": {
 			const rows = (a ? [a] : agents.list()).map(statusOf);
-			out(json, a ? rows[0] : rows, () => (rows.length ? rows.map((r) => describe(r, !!a)).join("\n") : `no agents yet: ${COMMAND} init <name> --model <provider/id>`));
+			out(json, a ? rows[0] : rows, () => (rows.length ? rows.map((r) => describe(r, !!a)).join("\n") : `no agents yet: ${COMMAND} setup`));
 			return rows.some((r) => "error" in r) ? 1 : 0;
 		}
-		case "start":
-			return startCmd(need(a, "agent name"), json);
+		case "start": {
+			if (!opt.all) return startCmd(agentName(a), json);
+			// Every agent, each on its own: one that cannot start does not keep the others down.
+			let code = 0;
+			const results: unknown[] = [];
+			for (const name of agents.list())
+				try {
+					if (json) results.push({ name, ...(await control.start(name)) });
+					else code = Math.max(code, await startCmd(name, false));
+				} catch (err) {
+					if (json) results.push({ name, error: (err as Error).message });
+					else console.log(`${name}: could not start: ${(err as Error).message}`);
+					code = 1;
+				}
+			if (json) console.log(JSON.stringify(results, null, 2));
+			return code;
+		}
 		case "restart":
-			return startCmd(need(a, "agent name"), json, true);
+			return startCmd(agentName(a), json, true);
 		case "up": {
 			// The login service runs `up --if-running`: it must never be the one that starts the user's Herdr Core
 			// (a core started from a service gets the service's bare environment, and could die with the service).
@@ -367,25 +487,26 @@ async function main(argv: string[]): Promise<number> {
 			return rs.some((r) => r.error) ? 1 : 0;
 		}
 		case "stop": {
-			const name = need(a, "agent name");
+			if (opt.all) return stopAll(json);
+			const name = agentName(a);
 			const ended = await control.stop(name);
 			out(json, { stopped: ended }, () => (ended.length ? `${name}: stopped ${ended.join(", ")}` : `${name} was not running; it stays stopped`));
 			return 0;
 		}
 		case "attach": {
-			const agent = agents.loadRecord(need(a, "agent name"));
+			const agent = agents.loadRecord(agentName(a));
 			const t = control.find(agent);
 			if (!t) throw new Error(`${agent.name} is not running: ${COMMAND} start ${agent.name}`);
 			console.error("Leave with ctrl+\\ (Ctrl+D or /quit would quit pi; Pi-personal would start it again).");
 			return spawnSync(process.env[`${ENV}_HC`] || "hc", ["attach", t.address], { stdio: "inherit" }).status ?? 1;
 		}
 		case "send": {
-			const name = need(a, "agent name");
-			const text = [...pos.slice(2), ...(rest ?? [])].join(" ");
+			const [name, words] = agentAnd(pos.slice(1));
+			const text = [...words, ...(rest ?? [])].join(" ");
 			return send(name, need(text, "message text"), opt);
 		}
 		case "follow": {
-			const agent = agents.loadRecord(need(a, "agent name"));
+			const agent = agents.loadRecord(agentName(a));
 			await port.follow(agent.paths.port, port.end(agent.paths.port), (e) => {
 				const { after: _a, ...ev } = e;
 				console.log(json ? JSON.stringify(ev) : show(e));
@@ -393,7 +514,7 @@ async function main(argv: string[]): Promise<number> {
 			return 0;
 		}
 		case "chat": {
-			const agent = agents.loadRecord(need(a, "agent name"));
+			const agent = agents.loadRecord(agentName(a));
 			if (!control.find(agent)) console.error(`note: ${agent.name} is not running; start it with: ${COMMAND} start ${agent.name}`);
 			const r = spawnSync(process.execPath, [path.join(ROOT, "channels", "local", "chat.ts")], {
 				stdio: "inherit",
@@ -402,17 +523,22 @@ async function main(argv: string[]): Promise<number> {
 			return r.status ?? 1;
 		}
 		case "port":
-			console.log(agents.loadRecord(need(a, "agent name")).paths.port);
+			console.log(agents.loadRecord(agentName(a)).paths.port);
 			return 0;
 		case "log": {
-			const agent = agents.loadRecord(need(a, "agent name"));
+			const agent = agents.loadRecord(agentName(a));
 			process.stdout.write(fs.existsSync(agent.paths.log) ? fs.readFileSync(agent.paths.log, "utf8") : "");
 			return 0;
 		}
 		case "login": {
-			// Everything after "login" goes to pi as it is (the provider, --api-key, --no-browser...).
+			// Everything after "login" goes to pi as it is (the provider, --api-key, --no-browser...). Without a
+			// provider, the same choices as pi's own /login.
 			const args = argv.slice(argv.indexOf("login") + 1).filter((x, i, all) => x !== "--home" && all[i - 1] !== "--home" && !x.startsWith("--home="));
-			if (!args.length) throw new UsageError(`usage: ${COMMAND} login <provider> [--api-key] [--no-browser]. ${PROVIDERS()}`);
+			if (!args.length) {
+				if (!process.stdin.isTTY) throw new UsageError(`usage: ${COMMAND} login <provider> [--api-key] [--no-browser]. ${PROVIDERS()}`);
+				const { connect } = await import("./welcome.ts");
+				return (await connect()) ? 0 : 1;
+			}
 			privateDir(piDir());
 			return spawnSync(process.execPath, [piCli(), "auth", "login", ...args], { stdio: "inherit", env: { ...process.env, PI_CODING_AGENT_DIR: piDir() } }).status ?? 1;
 		}
@@ -435,9 +561,10 @@ async function main(argv: string[]): Promise<number> {
 			return r.status ?? 1;
 		}
 		case "secret": {
-			if (a !== "set") throw new UsageError(`usage: ${COMMAND} secret set <agent> <key>`);
-			const agent = agents.loadRecord(need(b, "agent name"));
-			const key = need(pos[3], "secret name");
+			if (a !== "set") throw new UsageError(`usage: ${COMMAND} secret set [agent] <key>`);
+			const [name, words] = agentAnd(pos.slice(2));
+			const agent = agents.loadRecord(name);
+			const key = need(words[0], "secret name");
 			if (!/^[A-Za-z0-9._-]+$/.test(key)) throw new UsageError("secret names use A-Z a-z 0-9 . _ -");
 			const value = (process.stdin.isTTY ? await askHidden(`Paste the value for ${key} (it is not shown), then press Enter: `) : fs.readFileSync(0, "utf8")).trim();
 			if (!value) throw new UsageError("nothing was given");
@@ -449,8 +576,9 @@ async function main(argv: string[]): Promise<number> {
 		}
 		case "channel": {
 			if (a === "add" || a === "remove") {
-				const agent = agents.loadRecord(need(b, "agent name"));
-				const ch = need(pos[3], "channel name");
+				const [name, words] = agentAnd(pos.slice(2));
+				const agent = agents.loadRecord(name);
+				const ch = need(words[0], "channel name");
 				if (!agents.CHANNEL_RE.test(ch)) throw new UsageError(`"${ch}" is not a valid channel name: 1 to 9 characters, a-z, 0-9 and "-", starting with a letter`);
 				if (a === "add") {
 					if (!rest?.length && !agents.shipped(ch))
@@ -474,17 +602,22 @@ async function main(argv: string[]): Promise<number> {
 				return 0;
 			}
 			// A channel's own command (for example: telegram who, telegram allow <id>), with the channel's environment.
-			const agent = agents.load(need(a, "agent name"));
-			const p = channelProgram(agent, need(b, "channel name"));
-			return spawnSync(p.command, [...p.args, ...pos.slice(3), ...(rest ?? [])], { stdio: "inherit", cwd: p.cwd, env: p.env }).status ?? 1;
+			const [name, words] = agentAnd(pos.slice(1));
+			const agent = agents.load(name);
+			const ch = need(words[0], "channel name");
+			// A shipped channel's commands work before it is turned on (its setup comes first).
+			const on = agents.channels(agent, ROOT).some((c) => c.name === ch);
+			const p = channelProgram(on || !agents.shipped(ch) ? agent : { ...agent, settings: { ...agent.settings, channels: { ...(agent.settings.channels ?? {}), [ch]: { enabled: true } } } }, ch);
+			return spawnSync(p.command, [...p.args, ...words.slice(1), ...(rest ?? [])], { stdio: "inherit", cwd: p.cwd, env: p.env }).status ?? 1;
 		}
 		case "ext": {
 			// pi finds an agent's extensions in <folder>/.pi/extensions/<name>/: put one there to turn it on, take it out
 			// to turn it off. This only lists them and checks that pi loads them.
-			if (a !== "check") throw new UsageError(`usage: ${COMMAND} ext check <agent> [extension]. Extensions live in <agent folder>/.pi/extensions/<name>/`);
-			const agent = agents.load(need(b, "agent name"));
-			if (pos[3]) {
-				const r = { name: pos[3], ...checkExtension(agent, pos[3]) };
+			if (a !== "check") throw new UsageError(`usage: ${COMMAND} ext check [agent] [extension]. Extensions live in <agent folder>/.pi/extensions/<name>/`);
+			const [name, words] = agentAnd(pos.slice(2));
+			const agent = agents.load(name);
+			if (words[0]) {
+				const r = { name: words[0], ...checkExtension(agent, words[0]) };
 				out(json, [r], () => (r.ok ? `${r.name}: loads` : `${r.name}: FAILS: ${"error" in r ? r.error : ""}`));
 				return r.ok ? 0 : 1;
 			}
@@ -504,6 +637,12 @@ async function main(argv: string[]): Promise<number> {
 			await runForever(agent, b);
 			return 0;
 		}
+		case "setup": {
+			const { setup } = await import("./welcome.ts");
+			return setup(VERSION);
+		}
+		case "update":
+			return update(json);
 		case "doctor":
 		case "service":
 		case "uninstall": {

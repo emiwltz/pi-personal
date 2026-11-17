@@ -49,12 +49,15 @@ test("after -- everything is text, even words that look like options", async () 
 	assert.equal(r.stdout.trim(), "echo: --verbose please -h");
 });
 
-test("-h and help print the usage; --version prints versions; no command prints the usage", async () => {
-	for (const args of [["-h"], ["help"], [], ["send", "-h"]]) {
+test("-h and help print the usage; --version prints versions; no command shows the agents and what to do next", async () => {
+	for (const args of [["-h"], ["help"], ["send", "-h"]]) {
 		const r = await t.cli(...args);
 		assert.equal(r.code, 0, `${args}`);
-		assert.match(r.stdout, /Usage: pi-personal <command>/, `${args}`);
+		assert.match(r.stdout, /Usage: pp \[command\] \[agent\]/, `${args}`);
 	}
+	const none = await t.cli();
+	assert.equal(none.code, 0, none.stderr);
+	assert.match(none.stdout, /Talk to it: +pp chat|Start here: +pp setup|Start it: +pp start/);
 	const v = await t.cli("--version");
 	assert.equal(v.code, 0, v.stderr);
 	assert.match(v.stdout, /\d+\.\d+\.\d+/);
@@ -86,7 +89,7 @@ test("missing text, an unknown option, unknown command and unknown agent fail wi
 	const c = await t.cli("frobnicate");
 	assert.equal(c.code, 2);
 	assert.match(c.stderr, /unknown command/);
-	const d = await t.cli("send", "nosuch", "hi");
+	const d = await t.cli("attach", "nosuch");
 	assert.notEqual(d.code, 0);
 	assert.match(d.stderr, /no agent named "nosuch"/);
 });
@@ -123,7 +126,7 @@ test("login hands --api-key and --no-browser to pi", async () => {
 	// No argument at all is Pi-personal's own usage error.
 	const d = await t.cli("login");
 	assert.equal(d.code, 2);
-	assert.match(d.stderr, /usage: pi-personal login/);
+	assert.match(d.stderr, /usage: pp login/);
 });
 
 test("a second agent cannot take the folder of the first, nor a folder inside the private area", async () => {
@@ -169,16 +172,16 @@ test("installed in a folder with a space and an accent, an agent starts and answ
 });
 
 // The shim written by install.sh, evaluated without running the installer (it reaches the network): only the lines
-// from `cat > "$BIN/pi-personal" <<SHIM` to `SHIM`, with a Node and an install folder of our choice.
+// from `cat > "$BIN/pp" <<SHIM` to `SHIM`, with a Node and an install folder of our choice.
 async function shim(nodePath: string, dest: string, pathEnv?: string) {
 	const lines = fs.readFileSync(path.join(ROOT, "install.sh"), "utf8").split("\n");
-	const a = lines.findIndex((l) => l.startsWith('cat > "$BIN/pi-personal" <<SHIM'));
+	const a = lines.findIndex((l) => l.startsWith('cat > "$BIN/$n" <<SHIM'));
 	const b = lines.findIndex((l, i) => i > a && l === "SHIM");
 	assert.ok(a > 0 && b > a, "the shim is in install.sh");
 	const bin = path.join(t.dir, `bin-${path.basename(nodePath)}-${Math.random().toString(36).slice(2, 6)}`);
 	fs.mkdirSync(bin);
-	await run("sh", ["-c", `NODE="$1"; DEST="$2"; BIN="$3"\n${lines.slice(a, b + 1).join("\n")}`, "sh", nodePath, dest, bin]);
-	const shimFile = path.join(bin, "pi-personal");
+	await run("sh", ["-c", `NODE="$1"; DEST="$2"; BIN="$3"; n=pp\n${lines.slice(a, b + 1).join("\n")}`, "sh", nodePath, dest, bin]);
+	const shimFile = path.join(bin, "pp");
 	fs.chmodSync(shimFile, 0o755);
 	const r = await run("sh", [shimFile, "--version"], { env: { ...t.env, PATH: pathEnv ?? t.env.PATH }, timeout: 30_000 }).then(
 		(x) => ({ code: 0, out: x.stdout + x.stderr }),

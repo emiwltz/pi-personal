@@ -6,49 +6,44 @@ import * as path from "node:path";
 import * as agents from "./agents.ts";
 import * as control from "./control.ts";
 import * as herdr from "./herdr.ts";
-import { COMMAND, ENV, PRODUCT } from "./name.ts";
+import { COMMAND, ENV, PRODUCT, SLUG } from "./name.ts";
 import { home, piDir, ROOT } from "./paths.ts";
 import { channelProgram, checkExtension, checkModel, foundExtensions, piCli, piPackage } from "./runner.ts";
 
-const HERDR_MIN = "0.1.18"; // the oldest Herdr Core the tests ran against
 const NODE_MIN = "22.19.0";
-
-const newer = (a: string, b: string) => {
-	const pa = a.split(/[.-]/).map(Number);
-	const pb = b.split(/[.-]/).map(Number);
-	for (let i = 0; i < 3; i++) if ((pa[i] ?? 0) !== (pb[i] ?? 0)) return (pa[i] ?? 0) > (pb[i] ?? 0);
-	return true; // equal counts as new enough
-};
 
 // ---- the login service ----------------------------------------------------------------------------------------
 
-const unitName = COMMAND; // pi-personal.service, pi-personal.timer
-const launchLabel = `local.${COMMAND}.up`;
+const unitName = SLUG; // pi-personal.service, pi-personal.timer
+const launchLabel = `local.${SLUG}.up`;
 const systemdDir = () => path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config"), "systemd", "user");
 const launchFile = () => path.join(os.homedir(), "Library", "LaunchAgents", `${launchLabel}.plist`);
 const launchctl = (...args: string[]) => spawnSync(process.env[`${ENV}_LAUNCHCTL`] || "launchctl", args, { stdio: "pipe", encoding: "utf8" });
 const systemctl = (...args: string[]) => execFileSync(process.env[`${ENV}_SYSTEMCTL`] || "systemctl", ["--user", ...args], { stdio: "pipe", encoding: "utf8" });
 
 function hcPath(): string {
-	const set = process.env[`${ENV}_HC`];
-	if (set) return set;
-	const r = spawnSync("sh", ["-c", "command -v hc"], { encoding: "utf8" });
-	const p = r.stdout.trim();
-	if (!p) throw new Error("Herdr Core's hc command is not on PATH");
-	return p;
+	const found = herdr.find();
+	if (!found) throw new Error(`Herdr Core's hc command was not found: ${COMMAND} setup installs it`);
+	if (found.bin.includes("/")) return found.bin;
+	const r = spawnSync("sh", ["-c", `command -v ${found.bin}`], { encoding: "utf8" });
+	return r.stdout.trim() || found.bin;
 }
 
 /** The command the service runs: `up`, with everything it needs spelled out (a service starts with almost no environment). */
 function upCommand(): { argv: string[]; env: Record<string, string> } {
 	const hc = hcPath();
+	// An installed copy runs its pp command, which finds the Node.js the installer chose even after an update moved it.
+	const marker = path.join(ROOT, ".installed");
+	const shim = fs.existsSync(marker) ? fs.readFileSync(marker, "utf8").split("\n")[0].trim() : "";
+	const run = shim && fs.existsSync(shim) ? [shim] : [process.execPath, path.join(ROOT, "core", "cli.ts")];
 	return {
-		argv: [process.execPath, path.join(ROOT, "core", "cli.ts"), "up", "--if-running", "--home", home()],
+		argv: [...run, "up", "--if-running", "--home", home()],
 		// The PATH of the shell that installed the service: agents started by it get the same tools as from a shell.
 		env: { [`${ENV}_HC`]: hc, PATH: [...new Set([path.dirname(hc), path.dirname(process.execPath), ...(process.env.PATH ?? "").split(":").filter(Boolean), "/usr/local/bin", "/usr/bin", "/bin"])].join(":") },
 	};
 }
 
-function serviceInstall(): string {
+export function serviceInstall(): string {
 	const { argv, env } = upCommand();
 	if (process.platform === "darwin") {
 		const q = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
@@ -130,7 +125,7 @@ function serviceUninstall(): string[] {
 	return removed;
 }
 
-function serviceInstalled(): boolean {
+export function serviceInstalled(): boolean {
 	return process.platform === "darwin" ? fs.existsSync(launchFile()) : fs.existsSync(path.join(systemdDir(), `${unitName}.timer`));
 }
 
@@ -142,23 +137,29 @@ interface Check {
 	detail?: string;
 }
 
-export function doctor(): Check[] {
+export async function doctor(): Promise<Check[]> {
 	const checks: Check[] = [];
 	const add = (ok: boolean | "warn", what: string, detail?: string) => checks.push({ ok, what, detail });
-	add(newer(process.versions.node, NODE_MIN), `Node.js ${process.versions.node}`, newer(process.versions.node, NODE_MIN) ? undefined : `needs ${NODE_MIN} or newer`);
+	const nodeOk = herdr.atLeast(process.versions.node, NODE_MIN);
+	add(nodeOk, `Node.js ${process.versions.node}`, nodeOk ? undefined : `needs ${NODE_MIN} or newer`);
 	try {
 		const p = piPackage();
 		add(true, `pi ${p.version} (Pi-personal's own copy)`, p.dir);
 	} catch (err) {
 		add(false, "pi", (err as Error).message);
 	}
-	try {
-		const v = herdr.version();
-		add(newer(v, HERDR_MIN) ? true : "warn", `Herdr Core ${v}`, newer(v, HERDR_MIN) ? undefined : `tested from ${HERDR_MIN}`);
-		const s = herdr.server();
-		add(true, `Herdr Core is running (core ${s.id.slice(0, 8)})`);
-	} catch (err) {
-		add(false, "Herdr Core", (err as Error).message);
+	const hc = herdr.find();
+	if (!hc) add(false, "Herdr Core", `not found: ${COMMAND} setup installs it`);
+	else {
+		const v = hc.version;
+		add(herdr.atLeast(v, herdr.MIN_VERSION) ? true : "warn", `Herdr Core ${v}`, herdr.atLeast(v, herdr.MIN_VERSION) ? undefined : `tested from ${herdr.MIN_VERSION}: hc update`);
+		if (!(await herdr.isRunning())) add("warn", "Herdr Core is not running", `${COMMAND} start starts it`);
+		else
+			try {
+				add(true, `Herdr Core is running (core ${herdr.server().id.slice(0, 8)})`);
+			} catch (err) {
+				add(false, "Herdr Core", (err as Error).message);
+			}
 	}
 	const h = home();
 	const mode = fs.existsSync(h) ? fs.statSync(h).mode & 0o777 : undefined;
@@ -252,13 +253,37 @@ export async function uninstall(purge: boolean): Promise<string[]> {
 	} else done.push(`kept the private area ${home()} (conversations, secrets); delete it with --purge`);
 	const marker = path.join(ROOT, ".installed");
 	if (fs.existsSync(marker)) {
-		const shim = fs.readFileSync(marker, "utf8").trim();
-		if (shim && fs.existsSync(shim)) {
-			fs.rmSync(shim);
-			done.push(`removed ${shim}`);
-		}
+		// One installed command per line: `pp`, and the same command under its long name.
+		// Only files that still are Pi-personal's command (another program may have taken the name since).
+		const ours = (f: string) => {
+			try {
+				return fs.lstatSync(f).isSymbolicLink() || fs.readFileSync(f, "utf8").includes("Pi-personal's command");
+			} catch {
+				return false;
+			}
+		};
+		for (const shim of fs.readFileSync(marker, "utf8").split("\n").map((l) => l.trim()).filter(Boolean))
+			if (ours(shim)) {
+				fs.rmSync(shim, { force: true });
+				done.push(`removed ${shim}`);
+			}
 		fs.rmSync(ROOT, { recursive: true, force: true });
 		done.push(`removed ${ROOT}`);
+		// The PATH line the installer added, and only that line.
+		for (const rc of [".zshrc", ".bashrc", ".bash_profile", ".profile"].map((f) => path.join(os.homedir(), f))) {
+			let text: string;
+			try {
+				text = fs.readFileSync(rc, "utf8");
+			} catch {
+				continue;
+			}
+			const kept = text.split("\n").filter((l) => !l.includes("# added by Pi-personal's installer"));
+			if (kept.length !== text.split("\n").length) {
+				fs.writeFileSync(rc, kept.join("\n"));
+				done.push(`removed the PATH line from ${rc}`);
+			}
+		}
+		done.push("kept Herdr Core (it is Herdr's: hc server stop stops it)");
 	}
 	done.push("agents' folders were not touched");
 	return done;
@@ -267,7 +292,7 @@ export async function uninstall(purge: boolean): Promise<string[]> {
 export async function setup(cmd: string, args: string[], opt: Record<string, string | true>): Promise<number> {
 	const json = !!opt.json;
 	if (cmd === "doctor") {
-		const checks = doctor();
+		const checks = await doctor();
 		if (json) console.log(JSON.stringify(checks, null, 2));
 		else for (const c of checks) console.log(`${c.ok === true ? "ok  " : c.ok === "warn" ? "note" : "FAIL"}  ${c.what}${c.detail ? `: ${c.detail}` : ""}`);
 		return checks.some((c) => c.ok === false) ? 1 : 0;
