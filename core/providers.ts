@@ -4,10 +4,9 @@
 import { execFile, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import * as fs from "node:fs";
-import * as os from "node:os";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
-import { piDir, privateDir, ROOT } from "./paths.ts";
+import { piDir, privateDir, ROOT, writeWhole } from "./paths.ts";
 import { preparePi } from "./agents.ts";
 import { piCli, piPackage } from "./runner.ts";
 
@@ -86,9 +85,7 @@ async function editAuth(change: (data: Record<string, unknown>) => void): Promis
 			data = JSON.parse(fs.readFileSync(file, "utf8")) ?? {};
 		} catch {}
 		change(data);
-		const tmp = `${file}.${process.pid}.tmp`;
-		fs.writeFileSync(tmp, JSON.stringify(data, null, 2), { mode: 0o600 });
-		fs.renameSync(tmp, file);
+		writeWhole(file, JSON.stringify(data, null, 2), 0o600);
 		fs.chmodSync(file, 0o600);
 	} finally {
 		await release?.();
@@ -153,8 +150,8 @@ export interface Model {
 }
 
 /** The models of the providers Pi-Personal is connected to (by its sign-ins, or by pi's models.json), from pi's own list. */
-export function models(search?: string): Model[] {
-	const r = spawnSync(process.execPath, [piCli(), "--list-models", ...(search ? [search] : [])], { encoding: "utf8", env: storedOnly(), timeout: 60_000 });
+export function models(): Model[] {
+	const r = spawnSync(process.execPath, [piCli(), "--list-models"], { encoding: "utf8", env: storedOnly(), timeout: 60_000 });
 	return parseModels(r.stdout ?? "");
 }
 /** The same, without blocking (so that a wait can be drawn meanwhile); `error` when pi did not answer, which is not the

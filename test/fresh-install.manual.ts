@@ -173,7 +173,7 @@ test("on a fresh machine: one command installs everything, and the guide ends wi
 	await t.see(/Bring main back by itself if it stops\?.*\[Y\/n\]/);
 	t.type("n\r"); // the real login service manager is not touched by a test
 	await t.see(/main is ready, and waits for your answer/);
-	await t.see(/Talk to it here: +\S*pp chat/); // the full path: this terminal does not find pp yet
+	await t.see(/Open it: +\S*pp /); // the full path: this terminal does not find pp yet
 	await t.see(/In this terminal, pp is not found yet/);
 	assert.ok(fs.existsSync(path.join(privateArea(), "herdr-core-installed")), "the guide remembers it installed Herdr Core");
 	const code = /\[installer exit (\d+)\]/.exec(await t.see(/\[installer exit \d+\]/))![1];

@@ -11,9 +11,9 @@ import { promisify } from "node:util";
 import { isRunning } from "../core/herdr.ts";
 import * as port from "../core/port.ts";
 
-const run = promisify(execFile);
+export const run = promisify(execFile);
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const CLI = path.join(ROOT, "core", "cli.ts");
+export const CLI = path.join(ROOT, "core", "cli.ts");
 
 export interface Env {
 	dir: string;
@@ -128,6 +128,22 @@ export async function setup(name: string, opts: { requireKey?: string } = {}): P
 	return { dir, home: path.join(dir, "home"), env, model, cli, hc, portOf, waitEvent, close };
 }
 
+/** Change an agent's settings file: `extensions` lists the folders under extensions/ to turn on, by putting them where
+ * pi finds them (.pi/extensions/); every other key is merged into pi-personal.json. */
+export function changeSettings(folder: string, patch: Record<string, unknown>): void {
+	const { extensions, ...rest } = patch as { extensions?: string[] };
+	if (extensions) {
+		const dir = path.join(folder, ".pi", "extensions");
+		fs.rmSync(dir, { recursive: true, force: true });
+		for (const n of extensions) fs.cpSync(path.join(folder, "extensions", n), path.join(dir, n), { recursive: true });
+	}
+	const file = path.join(folder, "pi-personal.json");
+	if (Object.keys(rest).length) fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, "utf8")), ...rest }, null, 2));
+}
+
+/** The agent's last start (not a channel's), from its events. */
+export const lastStart = (portDir: string) => [...port.events(portDir).events].reverse().find((e) => e.type === "started" && !e.channel)!;
+
 export interface FakeModel {
 	port: number;
 	requests: { users: string[]; last: string; raw: string }[]; // users: without the "From:" line the bridge adds; raw: as sent
@@ -136,7 +152,8 @@ export interface FakeModel {
 
 /** An OpenAI-compatible fake model. Replies "echo: <last user text>"; "tool: <cmd>" makes it call bash with <cmd>;
  * "call: <tool> <json>" calls any tool; "long:<n>" replies n x's; "fail: <why>" is refused with an HTTP 400;
- * "denied:" is refused with an HTTP 401, as a wrong key is; "silent:" ends the run with an empty answer; "flaky: <x>" is refused once with a passing error, then answered. */
+ * "denied:" is refused with an HTTP 401, as a wrong key is; "silent:" ends the run with an empty answer; "flaky: <x>" is refused once with a passing error, then answered;
+ * "interim-fail:" writes a sentence and calls a tool, then the next request is refused. */
 export async function fakeModel(requireKey?: string): Promise<FakeModel> {
 	const requests: FakeModel["requests"] = [];
 	const flaked = new Set<string>(); // "flaky: <x>" is refused once with a passing error (503), then answered

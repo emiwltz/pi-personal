@@ -25,9 +25,9 @@ You do not need pi installed: Pi-Personal pins its own copy, separate from any p
 
 ## `pp setup`
 
-Five steps, about four minutes; each one is drawn with a line in the margin, from its title (◆) to what it settled (◇). The first time on a machine, the guide opens on a two-second drawing (a burst of stars that becomes the mark); any key skips it, `PI_PERSONAL_MOTION=never` turns every animation off (`always` plays it each time), and nothing moves outside a terminal. Colours follow your terminal's background, light or dark (the guide asks the terminal once; when it does not say, colours that read on both); `PI_PERSONAL_THEME=light` or `dark` decides instead. Run it again at any time: on a machine where everything is set up, it opens on a menu instead (talk to it from your phone, its model or the provider, coming back by itself, or the whole guide again). Pi-Personal adds only what is its own (Herdr Core, the agent, its channels); the model and the sign-in are pi's.
+Five steps, about four minutes; each one is drawn with a line in the margin, from its title (◆) to what it settled (◇). The first time on a machine, the guide opens on a two-second drawing (a burst of stars that becomes the mark); any key skips it, `PI_PERSONAL_MOTION=never` turns every animation off (`always` plays it each time), and nothing moves outside a terminal. Colours follow your terminal's background, light or dark (the guide asks the terminal once; when it does not say, colours that read on both); `PI_PERSONAL_THEME=light` or `dark` decides instead. Run it again at any time: on a machine where everything is set up and Herdr Core runs, it opens on a menu instead (talk to it from your phone, its model or the provider, coming back by itself, or the whole guide again). Pi-Personal adds only what is its own (Herdr Core, the agent, its channels); the model and the sign-in are pi's.
 
-1. **This machine.** Says what it finds. Herdr Core (the `hc` command) already there is used as it is (checked recent enough, and started); without one, it offers to install it with Herdr's own installer (into `~/.local/bin`). On Linux, it tells you if logging out would stop your programs, and the one command that prevents it.
+1. **This machine.** Says what it finds. Herdr Core (the `hc` command) already there is used as it is (checked recent enough: 0.1.18 or newer, else it offers `hc update`; and started); without one, it offers to install it with Herdr's own installer (into `~/.local/bin`). On Linux, it tells you if logging out would stop your programs, and the one command that prevents it.
 2. **A model.** pi's own list of providers, here: choose one, then pi's own sign-in runs in this terminal (`pi auth login`): with your account (a subscription: a browser opens, or pi shows a link and a code) or with an API key (paste it, then Enter). The sign-in is stored in Pi-Personal's own pi settings, shared by all your agents; your own pi is not touched. The model is pi's own choice for that provider, which you can change from pi's list. For anything else, pi's own screen is one choice away (`/login`, `/model`, `/quit`). Already connected, the guide asks whether to keep it; with an agent already made, it only says what is connected (each agent keeps its own model).
 3. **Your agent.** A name (`main` by default) and the model of step 2, written in its `pi-personal.json`: an agent keeps its model when pi's default changes later. It creates `~/pi-personal/<name>`, says the rule of the game (the agent is pi, with everything your account can do: no sandbox; it lives in the background), starts it in Herdr Core, and the agent says hello: its first real request. If the provider refuses the key or the sign-in, the guide says so and runs pi's sign-in again.
 4. **Reach it.** Each channel that ships with Pi-Personal (today: Telegram), now or later: for Telegram, a bot's token (paste the token, or BotFather's whole message; it is checked with Telegram before it is stored), then you write to the bot and type y to let yourself in (only someone writing at that moment is offered, with their Telegram id). Another channel is a small program you add ([write a channel](write-a-channel.md)).
@@ -45,14 +45,13 @@ It ends on what to do first: `pp`, where Enter opens your agent.
 
 ```sh
 pp                               # how your agent is doing; Enter opens it, ctrl+\ comes back
-pp chat                          # a conversation here; Ctrl+D to leave
 pp send "Summarize my notes" --wait   # one message; prints the answer
 pp attach                        # straight to its own screen; ctrl+\ to leave
 ```
 
-With one agent, commands need no name; with several, name it: `pp chat work`.
+With one agent, commands need no name; with several, name it: `pp attach work`.
 
-`pp` in a terminal is a small full screen (your terminal comes back as it was when you leave): your agent and how it is (a star beside its name when it is alive; amber when it waits for you, red when it cannot start), what Enter does, `s` for the full status, `q` to leave. With several agents, a card each, chosen with the arrows. Enter on an agent that is not running starts it (and Herdr Core if needed) and opens it. In a script, `pp` prints the same in plain text, with the next thing to do.
+`pp` in a terminal is a small full screen (your terminal comes back as it was when you leave): your agent and how it is (a star beside its name when it is alive; amber when it waits for you, red when it cannot start), what Enter does, `s` for the full status, `q` or Esc to leave. With several agents, a card each, chosen with the arrows (or `j` and `k`). Enter on an agent that is not running starts it (and Herdr Core if needed) and opens it. In a script, `pp` prints the same in plain text, with the next thing to do.
 
 The agent's own screen is pi itself, with everything pi offers; typed messages and messages from channels coexist. `ctrl+\` leaves it, and the agent keeps running. There, Ctrl+C and Ctrl+D do not quit pi, and Ctrl+Z does not freeze it: Pi-Personal turns them off in its own pi settings (`keybindings.json` in its private area, written once; change it as you like, it stays yours). Escape still stops what pi is doing. If you quit pi with `/quit`, Pi-Personal starts it again; to stop the agent, use `pp stop`.
 
@@ -92,7 +91,7 @@ Your agent is pi: it loads pi's extensions from its folder's `.pi/extensions/`, 
 
 **After a restart of the machine.** With the login service, your agent comes back by itself when Herdr Core may be started by it: always when Pi-Personal installed Herdr Core (nothing else of yours runs there), and when you said yes to it in `pp setup` (step 5, or "Coming back by itself" in its menu) for a Herdr Core of your own. Otherwise run `pp start` (or `pp start --all`) once; your agents come back, conversations included.
 
-`pp service install` (also offered by `pp setup`) installs a systemd user timer on Linux, a launchd agent on macOS. At login and every 5 minutes it runs `pp up --if-running`, which starts every agent and channel that should run and touches nothing else. If Herdr Core is not running, it starts it only when it may (above; the permission is the file `start-herdr-core-at-boot` in the private area): Herdr Core then runs with the environment the service was installed with (your `PATH` of that moment). Otherwise it waits for the next round. `pp service status` and `pp service uninstall` do what they say.
+`pp service install` (also offered by `pp setup`) installs a systemd user timer on Linux, a launchd agent on macOS. At login and every 5 minutes it runs `pp up --if-running`, which starts every agent and channel that should run and touches nothing else. If Herdr Core is not running, it starts it only when it may (above: Herdr Core was installed by Pi-Personal, or the file `start-herdr-core-at-boot` in the private area says yes; `pp service uninstall` takes both back): Herdr Core then runs with the environment the service was installed with (your `PATH` of that moment). Otherwise it waits for the next round. `pp service status` and `pp service uninstall` do what they say.
 
 **A machine nobody logs in to** (a Raspberry Pi, a server). On Linux, your programs stop when you log out, and user timers run only while you are logged in, unless you run `sudo loginctl enable-linger $USER` once (`pp setup` tells you when it is needed). After a reboot, agents come back at the first round after Herdr Core is running again: the service starts it itself when it may (above), once per start of the machine, and only if an agent should run; otherwise any `hc` or `pp start` starts it, from your own environment. A Herdr Core started by the service runs with the environment the service was installed with, and every terminal in it too. A Herdr Core you stop on purpose stays stopped until the next start of the machine.
 
@@ -119,13 +118,13 @@ It runs the installer again (the newest Pi-Personal, with the pi version it was 
 
 | | Visible folder | Private area |
 |---|---|---|
-| Where | `~/pi-personal/<name>` (or the folder given to `pp init`) | Linux: `~/.local/state/pi-personal` (or `$XDG_STATE_HOME/pi-personal`). macOS: `~/Library/Application Support/Pi-Personal`. `PI_PERSONAL_HOME` overrides it. |
+| Where | `~/pi-personal/<name>` (or the folder given to `pp init`) | Linux: `~/.local/state/pi-personal` (or `$XDG_STATE_HOME/pi-personal`). macOS: `~/Library/Application Support/Pi-personal`. `PI_PERSONAL_HOME` overrides it. |
 | Holds | `AGENTS.md`, `pi-personal.json`, and pi's `.pi/` (extensions, skills, settings) if you add some | Secrets, pi's sign-ins (`pi/`), conversations, the port, channel state (guest lists), received files, logs |
 | Rule | Never holds a secret. Safe to share, sync or put under git. It is code: pi runs the extensions in it. | Readable by your user only (mode 0700). |
 
 Copy a visible folder to another machine and run `pp init <name> <folder> --model <provider/id>` there: you get the same agent, without its secrets and its conversation history.
 
-**Growth.** Each agent's event log (`events.jsonl` in its port) only grows, by about a kilobyte per message; to start a new one, stop the agent and move the file aside ([port.md](port.md)). At each start, the keeper's log is rotated past 5 MB and receipts older than 30 days are removed. The conversation itself (`sessions/`) is pi's: pi compacts what the model sees, but the file keeps everything and only grows (about 60 MB after 470 long replies; a restart still takes 3 seconds).
+**Growth.** Each agent's event log (`events.jsonl` in its port) only grows, by about a kilobyte per message; to start a new one, stop the agent and move the file aside ([port.md](port.md)). At each start, the keeper's log is rotated past 5 MB and the handled and refused message files of the port (`taken/`, `rejected/`) older than 30 days are removed. The conversation itself (`sessions/`) is pi's: pi compacts what the model sees, but the file keeps everything and only grows (about 60 MB after 470 long replies; a restart still takes 3 seconds).
 
 **Backup.** Stop the agent (`pp stop`), copy its visible folder and the private area, start it again. To restore, put both back in place and `pp start`: the conversation, the secrets and the guest lists come back with them.
 
@@ -149,4 +148,4 @@ Your agents' visible folders are never touched. The `PATH` line the installer ad
 
 ## Every command
 
-`pp help` lists them, in three groups: everyday, manage, advanced. `init`, `status`, `start`, `up`, `stop`, `restart`, `send`, `follow`, `ext check`, `update` and `doctor` print JSON with `--json`.
+`pp help` lists the six to know; `pp help --all` lists them all, in three groups: everyday, manage, advanced. `init`, `status`, `start`, `up`, `stop`, `restart`, `send`, `follow`, `ext check`, `update` and `doctor` print JSON with `--json`.

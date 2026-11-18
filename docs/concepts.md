@@ -38,7 +38,7 @@ It never holds a secret, so you can share it, sync it or put it under git. **The
 
 ### Private area
 
-Secrets and machine state, readable by your user only (0700). Linux: `~/.local/state/pi-personal`; macOS: `~/Library/Application Support/Pi-Personal`; or `$PI_PERSONAL_HOME`. Inside:
+Secrets and machine state, readable by your user only (0700). Linux: `~/.local/state/pi-personal`; macOS: `~/Library/Application Support/Pi-personal`; or `$PI_PERSONAL_HOME`. Inside:
 
 ```
 pi/                    pi's configuration for all agents: settings.json, auth.json (sign-ins), models.json   [pi]

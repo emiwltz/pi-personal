@@ -1,103 +1,92 @@
-# Pi-Personal
+<p align="center">
+  <img src="docs/images/logo.svg" alt="Pi-Personal" width="112">
+</p>
 
-**A powerful agent, in a capable environment, that you can reach from anywhere.**
+<h1 align="center">Pi-Personal</h1>
 
-Pi-Personal gives you your own agent: a [pi](https://github.com/earendil-works/pi) session that lives on your machine, in [Herdr Core](https://herdr.dev), and answers wherever you write to it: its terminal, your shell, Telegram, or any channel you add.
+<p align="center">
+  <strong>Your own agent, always there.</strong><br>
+  A powerful agent, in a capable environment, that you can reach from anywhere.
+</p>
 
-- **Install in one line.** The guide sets up everything else: Herdr Core (yours, if you have one), a model with pi's own `/login` and `/model` (any provider pi supports), your agent, Telegram.
-- **Always there.** It runs in the background, comes back by itself after a crash, and continues the work that was cut off.
-- **Watch it, take over.** It works in a real terminal you can attach to at any time, with all of pi.
-- **Yours.** Everything is a file you can read; its secrets stay in a folder only you can open.
+<p align="center">
+  <a href="#install">install</a> · <a href="#how-it-works">how it works</a> · <a href="docs/guide.md">guide</a> · <a href="#learn-more">docs</a> · <a href="CONTRIBUTING.md">contributing</a>
+</p>
+
+<p align="center">
+  <img src="docs/images/demo.gif" alt="One line installs Pi-Personal; the guide opens on the Pp mark, connects a model, creates the agent, which says hello; then pp shows it, alive." width="820">
+</p>
+
+Pi-Personal gives you an agent of your own: a [pi](https://github.com/earendil-works/pi) session that lives on your machine, in [Herdr Core](https://herdr.dev), and answers wherever you write to it.
+
+- **One line to install.** A guide in five steps does the rest: Herdr Core (yours, if you have one), a model with pi's own sign-in, your agent, Telegram. About four minutes. [guide →](docs/guide.md)
+- **Always there.** It runs in the background, comes back by itself after a crash or a restart of the machine (the guide sets this up), and picks up the work that was cut off.
+- **Watch it, take over.** `pp` shows how it is doing; Enter opens its screen, which is all of pi; `ctrl+\` comes back, and it keeps working.
+- **Reach it from anywhere.** Telegram is built in. Any other service is a small program, in any language. [write a channel →](docs/write-a-channel.md)
+- **It sets itself up.** Ask it to change its model, its instructions or who may write to it: it knows how, and takes such requests from its owner only. [its manual →](docs/for-agents.md)
+- **Yours.** Everything is a plain file you can read. Secrets stay in a folder only you can open. No account, no telemetry.
+
+## Install
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/emiwltz/pi-personal/main/install.sh | sh
 ```
 
-Linux or macOS. The installer brings Node.js if it is missing, changes nothing else on the machine without asking, and ends in the guide, which uses your Herdr Core or installs one (asking first), for example:
-
-```
-  ◆  A model  2/5
-  │  ? Which provider? (type to search, ↑ ↓, Enter)
-  │    Anthropic  your subscription or an API key
-  │  ✔ Anthropic: connected
-  │  ✔ the model: anthropic/claude-opus-5-5
-  ◇  Anthropic · claude-opus-5-5
-
-  ◆  Your agent  3/5
-  │  ✔ main created in ~/pi-personal/main, with anthropic/claude-opus-5-5
-  │  ! main is pi, the coding agent, with everything your account can do on this machine: there is no sandbox.
-  │  ✦ main is alive.
-  │  main › Hello! I'm main, your agent on this machine. What shall we start with?
-  ◇  main is alive, and answered
-```
-
-Then:
+Linux or macOS. The installer brings Node.js if it is missing, changes nothing else without asking, and ends in the guide. Then, every day:
 
 ```sh
-pp            # how your agent is doing; Enter opens its screen, ctrl+\ comes back
-pp chat       # talk to it here
+pp            # how your agent is doing: Enter opens it, ctrl+\ comes back
 ```
 
-Pi-Personal is an independent project built on pi. It is not a sandbox: your agent can do anything your user account can do, as pi can ([security](docs/security.md)).
+| | |
+|---|---|
+| `pp setup` | set things up, or change them: a channel, the model |
+| `pp status` | what it and its channels are doing, and why |
+| `pp doctor` | check everything, by topic, with what to do |
+| `pp update` | the newest Pi-Personal, with the pi it was tested with |
+| `pp help` | the rest (`pp help --all` lists every command) |
+
+> [!IMPORTANT]
+> Your agent is pi, the coding agent: it can do anything your user account can do on this machine. There is no sandbox. Read [security](docs/security.md) before you let anyone else write to it.
 
 ## How it works
 
-```mermaid
-flowchart LR
-  subgraph channels["Channels: any program, any language"]
-    tg["Telegram"]
-    sh["a script, a cron job"]
-    ch["pp chat"]
-  end
-  subgraph port["The port: plain files"]
-    inbox["inbox/"]
-    events["events.jsonl"]
-  end
-  subgraph herdr["Herdr Core: terminal pi-personal-main"]
-    runner["runner"] --> pi["pi + bridge"]
-  end
-  tg & sh & ch -- "write a message file" --> inbox
-  inbox -- "one message per run" --> pi
-  pi -- "replies, status, errors" --> events
-  events -- "read from where they stopped" --> tg & sh & ch
-```
+<p align="center">
+  <img src="docs/images/how-it-works.svg" alt="Telegram, your terminal or a script write a message as a file into the port; your agent, pi in Herdr Core, takes one at a time and writes each reply as a line the channels read." width="880">
+</p>
 
-The core is three parts and does nothing else:
+The core is three parts, and does nothing else:
 
-- **pi**, the agent itself, with all its tools, extensions, skills and MCP servers;
-- **Herdr Core**, where it lives: a terminal that keeps running in the background, where the agent can open other sessions;
-- **the port**, a folder of plain files through which anything talks to it. A channel writes a message as a file; the agent takes one message per run; every reply, and the end of every message, is a line in an events file that channels read.
+- **pi** is the agent, with its tools, extensions, skills and MCP servers.
+- **Herdr Core** is where it lives: a terminal that keeps running in the background, where the agent can open other sessions.
+- **The port** is how anything reaches it: a folder of plain files. A message is a file; every reply is a line.
 
-Its promises hold under crashes: a message is never lost and never handled twice, a reply never goes to someone it was not meant for, and every message ends with a reply or an error. About 2,900 lines of TypeScript run directly by Node.js, with one dependency (pi, pinned), checked by over 140 tests that run the real pi in an isolated Herdr Core, kill it in the middle of its work, and fill its disk.
-
-Everything a messaging service does its own way (formatting, groups, voice, reactions) belongs to its channel; everything else an agent could do belongs to pi's extensions. The core never changes to add an ability.
+A message is never lost and never handled twice, a reply never goes to someone it was not meant for, and every message ends with a reply or an error, even when pi crashes in the middle of its work. What a messaging service does its own way belongs to its channel; what an agent could do belongs to pi's extensions. The core never changes to add an ability.
 
 ## Learn more
 
-- [The guide](docs/guide.md): install, setup, everyday use, channels, starting at login, updates, backups, uninstalling.
-- [Concepts](docs/concepts.md): agent, folder, session, keeper, port, bridge, channels, extensions.
-- [Security](docs/security.md): what Pi-Personal trusts, and what can go wrong. Read it before you let anyone else talk to your agent.
-- [The Telegram channel](channels/telegram/README.md), and [how to write your own](docs/write-a-channel.md) for another service, in any language.
-- [The port](docs/port.md): the protocol, for anyone writing a client.
-- [A map of the code](docs/code.md), and the [decisions](docs/decisions/) behind the design.
+[the guide](docs/guide.md) · [concepts](docs/concepts.md) · [security](docs/security.md) · [Telegram](channels/telegram/README.md) · [write a channel](docs/write-a-channel.md) · [the port](docs/port.md) · [a map of the code](docs/code.md) · [decisions](docs/decisions/)
 
-## Project status
+## Status
 
-Version 0.4, early. Tested on Linux (arm64) and macOS (arm64), with pi 1.5.2, Herdr Core 0.1.18 to 0.1.21, and Node.js 22 and 24; installed from scratch on a simulated fresh machine on both. Used for real with a hosted model and the Telegram channel. Not yet proven: weeks of continuous use, a power cut, a real fresh machine of every kind.
+Version 0.4, early. Tested on Linux and macOS (arm64), with pi 1.5.2, Herdr Core 0.1.18 to 0.1.21, and Node.js 22 and 24; installed from scratch on a simulated fresh machine on both, and used for real with a hosted model and Telegram. Not yet proven: weeks of continuous use, a power cut, a real fresh machine of every kind.
 
-Pi-Personal follows pi: a new pi version is adopted once the tests pass with it (`test/contracts.test.ts` says first which of pi's behaviours changed), and `pp update` brings it.
+Pi-Personal follows pi: a new pi is adopted once the tests pass with it, and `pp update` brings it.
 
-## Development
+## Contributing
+
+About 6,000 lines of TypeScript, run directly by Node.js, with one dependency: pi. Checked by 185 tests that run the real pi in an isolated Herdr Core, kill it in the middle of its work, and fill its disk.
 
 ```sh
 git clone https://github.com/emiwltz/pi-personal.git && cd pi-personal
 npm ci
-npm test                                  # about 15 minutes
-node --test test/fresh-install.manual.ts  # before a release: a fresh machine, simulated (downloads about 100 MB)
+npm test      # about 15 minutes; needs Herdr Core's hc on your PATH, never touches your own agents
 ```
 
-The tests need Herdr Core's `hc` on your `PATH`. Each test file starts its own isolated Herdr Core (its own session name and runtime folders, checked against your default core before anything is stopped), the real pi, and a fake model: nothing touches your own agents or your Herdr Core. [docs/code.md](docs/code.md) maps the code.
+If you are a person or an agent working on this repository, read [CONTRIBUTING.md](CONTRIBUTING.md) first: what the project must stay, how it is tested, how a version is made.
 
-## License
+## Thanks
 
-[MIT](LICENSE).
+Pi-Personal is an independent project, standing on two others: [pi](https://github.com/earendil-works/pi), the agent, and [Herdr Core](https://github.com/herdrdev/herdr-core), the place it lives. ✦ The agent is a star that stays lit.
+
+[MIT](LICENSE)

@@ -16,10 +16,10 @@ Pi-Personal is TypeScript run directly by Node.js 22 (type stripping: no build s
 | `docs/for-agents.md` | — | The agent's own manual (`pp --skill`): the rules (its owner only, no secret in a conversation, say before changing) and where each setting lives. A new agent's `AGENTS.md` (in `core/agents.ts`) points to it, and has the "First meeting" and "About my person" sections. |
 | `core/home.ts` | — | `pp` alone: in a terminal, the home screen (the agent and how it is, a card each when there are several; Enter starts it if needed and opens its screen with `hc attach`, ctrl+\\ comes back); in a script, the same in plain text with the next thing to do. Looking never starts Herdr Core. |
 | `core/welcome.ts` | — | `pp setup`, the guide in five steps, each drawn with its line in the margin (`ask.margin`): the opening; Herdr Core found, installed or started; a model with pi's own list and sign-in (`pi auth login`), pi's own screen for anything else; the agent, the rule of the game, its start and its hello (the waits drawn as a star being lit, or a light passing over the words); channels; the login service. |
-| `core/screen.ts` | — | How it looks, in one place: the palette for a dark and a light terminal, the four levels of text, the mark (a square « Pp »), the opening (a burst of stars that falls back into the mark), the star of an agent that is alive, the bar. Pure functions that return lines of text; `sense` asks the terminal its background once, `look` decides colour and motion (none outside a terminal), `play` plays a drawing in place. `ask.ts` takes its colours from here. |
+| `core/screen.ts` | — | How it looks, in one place: the palettes for a dark terminal, a light one, and one whose background is unknown (it reads on both), the four levels of text, the mark (a square « Pp »), the opening (a burst of stars that falls back into the mark), the star of an agent that is alive, the waits (a star being lit, a light passing over words). Pure functions that return lines of text; `sense` asks the terminal its background once, `look` decides colour and motion (none outside a terminal), `play` plays a drawing in place. `ask.ts` takes its colours from here. |
 | `core/providers.ts` | pi | What pi stored: the providers pi lists models for, the model pi keeps as its default. Opens pi's own screen (`/login`, `/model`), and passes `pp login <provider>` to `pi auth login`. |
 | `core/ask.ts` | — | Questions in the terminal, without a dependency: a list that narrows as you type, yes or no, text, a secret; plain lines when there is no terminal (tests). |
-| `core/setup.ts` | — | `doctor`, the optional login service (systemd user timer or launchd agent), `uninstall`. |
+| `core/setup.ts` | — | `maintain`: `doctor` by topic, the optional login service (systemd user timer or launchd agent), `uninstall`; and whether the service may start Herdr Core after a restart of the machine (`bootAllowed`, once per boot: `bootStartDue`). |
 | `core/paths.ts`, `core/name.ts` | — | Where things live, and the product's names (the core's code takes them from `name.ts`). |
 | `channels/local/chat.ts` | channel | `pp chat`: a channel of a few dozen lines, written on the port alone. The worked example of [write-a-channel.md](write-a-channel.md). |
 | `channels/telegram/` | channel | The Telegram channel, its own `setup` (run by `pp setup`), and its Markdown-to-HTML formatter. It imports nothing from `core/`. See [its README](../channels/telegram/README.md). |
@@ -42,30 +42,6 @@ If pi dies at any point, the message is either still in the inbox (handed again)
 - The runner (`runner.runForever`) takes `runner.lock`, then loops: start pi with the bridge, watch it get ready, and when it ends decide why (a quit, a crash, an extension that breaks loading, pi itself unable to start) and what to do (start again at once, after a backoff, in safe mode, or give up and retry in an hour). It writes what it knows to `keeper.json`.
 - `pp status` reads `keeper.json`, `last-error.json` (written by the bridge) and Herdr Core's view of the terminal: never the event history.
 
-## Conventions
+## Conventions and tests
 
-- **Nothing that writes an event may kill pi or the runner.** Events go through `port.emitter`, which keeps them in memory while the disk refuses them.
-- **One source of truth for each fact.** Who a reply is for is read from pi's session, never kept beside it; what the keeper knows is in `keeper.json`; the stop on purpose is the `stopped` file.
-- **The core knows no channel by name.** Channel-specific behaviour lives in `channels/<name>/`; channels import nothing from `core/`.
-- **Comments say why.** Each file starts with what it is for; non-obvious lines say what they protect against.
-
-## Tests
-
-`npm test` runs every `test/*.test.ts` with Node's test runner, one file at a time. Most tests are end to end: `test/helpers.ts` (`setup`) starts an isolated Herdr Core (its own session name and runtime folders; its identity is checked against your default core before it is stopped), a private area of its own, and a fake OpenAI-compatible model.
-
-The fake model answers `echo: <text>`, and obeys a few words in the last user message: `tool: <command>` (call bash), `call: <tool> <json>` (call any tool), `long:<n>` (a long answer), `fail: <why>` (a refusal), `silent:` (an empty answer), `flaky:` (refused once, then answered), `interim-fail:` (a sentence and a tool call, then a refusal). `test/fake-telegram.ts` is a fake Bot API.
-
-| File | What it checks |
-|---|---|
-| `port.test.ts` | the file protocol on its own |
-| `first-message.test.ts`, `messages.test.ts` | a first agent; isolation, one message per run, duplicates |
-| `conversations.test.ts`, `errors.test.ts` | replies never mixed; errors reach the sender |
-| `crash-and-terminal.test.ts`, `keeper.test.ts`, `lifecycle.test.ts` | crashes, the keeper's rules, safe mode, stop and start |
-| `durability.test.ts`, `edge-cases.test.ts`, `regressions.test.ts` | full disks, bursts, races, and every defect found so far |
-| `settings.test.ts`, `cli.test.ts`, `install.test.ts` | settings, the command line, install and uninstall |
-| `setup.test.ts` | `pp` alone and `pp setup`, answered on standard input |
-| `fresh-install.manual.ts` | not in `npm test`: a fresh machine, simulated (empty home, system commands only), the real installer in a real terminal, `pp setup` answered key by key; it downloads Node.js and Herdr Core |
-| `telegram.test.ts` | the Telegram channel |
-| `contracts.test.ts` | the behaviours of pi and Herdr Core the core relies on; run it first after updating either |
-
-To run one file: `node --test test/messages.test.ts`.
+How the code is written and tested, and how a version is made: [CONTRIBUTING.md](../CONTRIBUTING.md).

@@ -22,7 +22,7 @@ Your folder is your working directory: `pwd` shows it.
 | Skills, prompt templates, packages, MCP servers | the way pi does it, in your folder's `.pi/` | `pp pi <args>` runs Pi-Personal's own pi (to install a package, for example). |
 | How you are doing | | `pp status <agent>`, `pp doctor`, `pp log <agent>`. |
 
-`pp help --all` lists every command. Each one is safe to run from your terminal.
+`pp help --all` lists every command; each one runs from your terminal. Some cannot be undone (`pp uninstall`, `pp stop --all`): only on your owner's request.
 
 ## Restarting yourself
 

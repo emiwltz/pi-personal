@@ -1,19 +1,16 @@
 // Lifecycle: start says whether pi got ready; extensions that stop pi while loading; quitting pi is not a failure;
 // work stopped on purpose is not resumed; one private area seen from two Herdr Cores.
 import assert from "node:assert/strict";
-import { execFile, execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { after, before, test } from "node:test";
-import { promisify } from "node:util";
 import * as port from "../core/port.ts";
-import { type Env, ROOT, setup, sleep } from "./helpers.ts";
+import { CLI, type Env, run, setup, sleep } from "./helpers.ts";
 
 // Real restart rules for the /quit test: 5 failures within 10 minutes would give up. (Read by the core at its start.)
 process.env.PI_PERSONAL_WINDOW_MS = "600000";
 
-const run = promisify(execFile);
-const CLI = path.join(ROOT, "core", "cli.ts");
 let t: Env;
 const folder = (n: string) => path.join(t.dir, "agents", n);
 const P = (n: string) => t.portOf(n);

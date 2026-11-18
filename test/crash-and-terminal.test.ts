@@ -6,11 +6,11 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as port from "../core/port.ts";
-import { type Env, ROOT, setup, sleep } from "./helpers.ts";
+import { type Env, lastStart, ROOT, setup, sleep } from "./helpers.ts";
 
 let t: Env;
 const P = () => t.portOf("main");
-const lastStarted = () => [...port.events(P()).events].reverse().find((e) => e.type === "started" && !e.channel)!;
+const lastStarted = () => lastStart(P());
 const status = async () => JSON.parse((await t.cli("status", "main", "--json")).stdout);
 
 before(async () => {

@@ -2,20 +2,17 @@
 // empty run; an extension stuck in a loop; bursts; fairness; a lock shared with another Herdr Core; settings edits
 // that lose nothing; a full disk; text typed in the terminal; extension checks; the sender line.
 import assert from "node:assert/strict";
-import { execFile, execFileSync } from "node:child_process";
-import { promisify } from "node:util";
+import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { after, before, test } from "node:test";
 import { openWork } from "../core/bridge.ts";
 import * as port from "../core/port.ts";
 import { type FakeTelegram, fakeTelegram } from "./fake-telegram.ts";
-import { type Env, ROOT, setup, sleep } from "./helpers.ts";
+import { CLI, type Env, run, setup, sleep } from "./helpers.ts";
 
 process.env.PI_PERSONAL_STARTUP_MS = "15000"; // the keeper's watchdog, read by the core when it starts
 
-const CLI = path.join(ROOT, "core", "cli.ts");
-const run = promisify(execFile);
 const ALICE = 1001;
 const BOB = 1002;
 let t: Env;

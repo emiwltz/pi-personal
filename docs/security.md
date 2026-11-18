@@ -33,7 +33,7 @@ A channel you write or install yourself is responsible for its own authorization
 
 ## Secrets live only in the private area
 
-- `pp secret set <agent> <key>` stores a secret as `secrets/<key>` in the agent's private area, mode `0600`. It reads the value from standard input and never prints it.
+- `pp secret set <agent> <key>` stores a secret as `secrets/<key>` in the agent's private area, mode `0600`. It asks for the value without showing it (or reads it from standard input in a script) and never prints it.
 - Model sign-ins are pi's: `pp login <provider>` runs `pi auth login`, which stores them in pi's `auth.json` inside the private area (`pi/`).
 - Nothing Pi-Personal writes in the visible folder is a secret. The test suite checks that the Telegram token appears nowhere but its secret file.
 - Every channel of an agent can read all of that agent's secrets (`PI_PERSONAL_SECRETS`).
@@ -83,7 +83,7 @@ Every download goes over HTTPS and is saved whole before it runs: a connection c
 
 Your Herdr Core carries your other work. Pi-Personal:
 
-- **starts it from the login service only when it may**: when Pi-Personal installed it, or when you said yes in `pp setup` for a Herdr Core of your own (the file `start-herdr-core-at-boot` in the private area; delete it to take the permission back). Otherwise the service, `pp up --if-running`, first checks Herdr Core's socket without starting it, and does nothing if Herdr Core is not running. A Herdr Core started by the service runs with the environment the service was installed with. (`pp setup` starts it, and a `pp` command you run by hand calls `hc`, which starts the selected Herdr Core when it is not running: that is Herdr's behaviour, from your own shell.)
+- **starts it from the login service only when it may**: when Pi-Personal installed it, or when you said yes in `pp setup` for a Herdr Core of your own (the file `start-herdr-core-at-boot` in the private area). `pp service uninstall` takes the permission back in both cases. Otherwise the service, `pp up --if-running`, first checks Herdr Core's socket without starting it, and does nothing if Herdr Core is not running. A Herdr Core started by the service runs with the environment the service was installed with. (`pp setup` starts it, and a `pp` command you run by hand calls `hc`, which starts the selected Herdr Core when it is not running: that is Herdr's behaviour, from your own shell.)
 - **installs or updates it only on your yes**, in `pp setup`, with Herdr's own installer or `hc update` (running terminals keep running);
 - **stops it only when you ask, and only when it runs nothing else**: `pp stop --all` stops your agents, then Herdr Core if no other program of yours runs in it; otherwise it leaves it running and says what else runs. `pp stop` and `pp uninstall` never stop it, and nothing reconfigures it;
 - **only touches its own terminals**: those it created, recognised by their labels (`pi-personal.agent`, `pi-personal.home`, and `pi-personal.role` or `pi-personal.channel`). It stops them and removes its own finished ones. It never sends keys, types into, or stops a terminal it did not create.

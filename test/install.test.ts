@@ -1,13 +1,10 @@
 // Install, run, uninstall: no Pi-Personal process or service remains, and the agent's folder is kept.
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { promisify } from "node:util";
-import { type Env, ROOT, setup, sleep } from "./helpers.ts";
+import { type Env, ROOT, run, setup, sleep } from "./helpers.ts";
 
-const run = promisify(execFile);
 let t: Env;
 before(async () => (t = await setup("a15")));
 after(async () => t.close());

@@ -14,13 +14,14 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { COMMAND } from "./name.ts";
+import { filesIn } from "./paths.ts";
 import * as port from "./port.ts";
 
 const MESSAGE = "pi-personal.message";
 const NOTE = "pi-personal.restarted";
 const SETTLED = "pi-personal.settled"; // a run ended (finished, or aborted by a person): what came before is closed
 const STOPPED = "pi-personal.stopped"; // the user stopped the agent on purpose: do not resume
-const RETRY_MS = [10_000, 30_000, 60_000, 300_000]; // a message pi did not start a run with (no model, no key...)
+const RETRY_STEPS_MS = [10_000, 30_000, 60_000, 300_000]; // a message pi did not start a run with (no model, no key...)
 
 type Content = string | { type: string; text?: string }[] | undefined;
 const textOf = (content: Content) =>
@@ -121,9 +122,7 @@ export default function bridge(pi: ExtensionAPI) {
 		safeMode = process.env.PI_PERSONAL_SAFE_MODE ? JSON.parse(process.env.PI_PERSONAL_SAFE_MODE) : null;
 	} catch {}
 	const restarted = process.env.PI_PERSONAL_RESTARTED || "";
-	const stopped = path.join(path.dirname(portDir), "stopped"); // written by "pp stop" before it stops pi
-	const wasStopped = path.join(path.dirname(portDir), "was-stopped"); // "pp start" after a stop: never resume
-	const lastErrorFile = path.join(path.dirname(portDir), "last-error.json"); // read by "pp status"
+	const { stopped, wasStopped, lastError: lastErrorFile } = filesIn(path.dirname(portDir));
 	port.ensurePort(portDir);
 	// Writing an event must never kill pi: what cannot be written waits and is written later.
 	const emit = port.emitter(portDir, (m) => process.stderr.write(`[pi-personal] ${m}\n`));
@@ -166,7 +165,7 @@ export default function bridge(pi: ExtensionAPI) {
 	/** A message pi did not keep (it never started a run with it, or could not record it): say so, try again later. */
 	const retryLater = (id: string, why: string) => {
 		const tries = (stuck.get(id)?.tries ?? 0) + 1;
-		const wait = RETRY_MS[Math.min(tries, RETRY_MS.length - 1)];
+		const wait = RETRY_STEPS_MS[Math.min(tries, RETRY_STEPS_MS.length - 1)];
 		const retryAt = Date.now() + wait;
 		stuck.set(id, { tries, next: retryAt });
 		const msg = parsed.get(id)?.msg;
@@ -284,7 +283,7 @@ export default function bridge(pi: ExtensionAPI) {
 	const hand = (msg: port.Message) => {
 		if (known.has(msg.id)) return; // never twice into the session
 		handed.set(msg.id, Date.now());
-		const details: Details = { id: msg.id, ...(msg.from ? { from: msg.from } : {}), ...(msg.conversation !== undefined ? { conversation: msg.conversation } : {}) };
+		const details: Details = refOf(msg);
 		pi.sendMessage({ customType: MESSAGE, content: compose(msg), display: true, details }, { triggerTurn: true });
 	};
 
@@ -314,9 +313,9 @@ export default function bridge(pi: ExtensionAPI) {
 		const c = ctx;
 		if (!c || working || !c.isIdle()) return;
 		const now = Date.now();
-		if (starting && !handed.size && now - startingAt > RETRY_MS[0]) starting = false; // the restart note never started a run
+		if (starting && !handed.size && now - startingAt > RETRY_STEPS_MS[0]) starting = false; // the restart note never started a run
 		for (const [id, at] of [...handed]) {
-			if (now - at < RETRY_MS[0]) continue;
+			if (now - at < RETRY_STEPS_MS[0]) continue;
 			handed.delete(id);
 			starting = false;
 			if (inSession(id)) {

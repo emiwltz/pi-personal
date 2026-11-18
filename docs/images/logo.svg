@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 200" width="260" height="200" role="img" aria-label="Pi-Personal">
+  <title>Pi-Personal</title>
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="260" y2="60" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffb548"/>
+      <stop offset="1" stop-color="#5ed8c8"/>
+    </linearGradient>
+  </defs>
+  <g fill="url(#g)" shape-rendering="crispEdges"><rect x="10" y="6" width="30" height="158"/><rect x="10" y="6" width="106" height="30"/><rect x="86" y="6" width="30" height="90"/><rect x="10" y="66" width="106" height="30"/><rect x="144" y="60" width="30" height="140"/><rect x="144" y="60" width="104" height="30"/><rect x="218" y="60" width="30" height="104"/><rect x="144" y="134" width="104" height="30"/></g>
+</svg>

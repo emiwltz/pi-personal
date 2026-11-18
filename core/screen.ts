@@ -99,7 +99,7 @@ const clamp = (x: number, a = 0, b = 1) => Math.min(b, Math.max(a, x));
 const ease = (x: number) => ((x = clamp(x)), x * x * (3 - 2 * x));
 const easeOut = (x: number) => 1 - (1 - clamp(x)) ** 3;
 const span = (t: number, from: number, to: number) => clamp((t - from) / (to - from));
-export const mix = (c1: Rgb, c2: Rgb, k: number): Rgb => ((k = clamp(k)), [c1[0] + (c2[0] - c1[0]) * k, c1[1] + (c2[1] - c1[1]) * k, c1[2] + (c2[2] - c1[2]) * k]);
+const mix = (c1: Rgb, c2: Rgb, k: number): Rgb => ((k = clamp(k)), [c1[0] + (c2[0] - c1[0]) * k, c1[1] + (c2[1] - c1[1]) * k, c1[2] + (c2[2] - c1[2]) * k]);
 function code(c: Rgb, background: boolean, depth: Depth): string {
 	const [r, g, b] = c.map(Math.round);
 	const lead = background ? 48 : 38;
@@ -321,23 +321,12 @@ export const star = (l: Look, t = 0) => paint(l, "✦", l.motion ? mix(l.palette
 const LIGHTING = ["·", "∙", "•", "✧", "✦", "✧"];
 /** A star being lit, while something starts: a point, then larger, then a star. */
 export const lighting = (l: Look, t: number) => paint(l, LIGHTING[Math.floor(t / 130) % LIGHTING.length], mix(l.palette.a, l.palette.ink, 0.5 + 0.5 * Math.sin(t / 130)));
-export const ok = (l: Look) => alive(l, "✔");
 /** A light that passes over words, again and again, while a model thinks. Without motion: the words, secondary. */
 export function shimmer(l: Look, text: string, t: number): string {
 	if (!l.motion || l.depth === "none" || l.ground === "unknown") return second(l, text);
 	const chars = [...text];
 	const at = ((t % 1600) / 1600) * (chars.length + 12) - 6;
 	return chars.map((c, i) => paint(l, c, mix(l.palette.mute, l.palette.ink, Math.exp(-(((i - at) / 3) ** 2))))).join("");
-}
-/** A bar that fills with the gradient of the mark: for what can be measured (a download). `k` is 0 to 1. */
-export function bar(l: Look, k: number, columns: number): string {
-	const full = Math.floor(clamp(k) * columns);
-	let out = "";
-	for (let i = 0; i < columns; i++) {
-		const c = mix(l.palette.a, l.palette.b, i / Math.max(1, columns - 1));
-		out += i < full ? paint(l, "━", c) : i === full && k < 1 ? paint(l, "╸", c) : line(l, "─");
-	}
-	return out;
 }
 
 // ---- keys -------------------------------------------------------------------------------------------------------------------

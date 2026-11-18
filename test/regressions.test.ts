@@ -2,34 +2,20 @@
 // two private areas on one Herdr Core, the login service never starting Herdr Core.
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { promisify } from "node:util";
 import * as herdr from "../core/herdr.ts";
 import * as port from "../core/port.ts";
-import { type Env, ROOT, setup, sleep } from "./helpers.ts";
+import { changeSettings, type Env, ROOT, run, setup, sleep } from "./helpers.ts";
 
-const run = promisify(execFile);
 let t: Env;
 const folder = () => path.join(t.dir, "agents", "main");
 const P = () => t.portOf("main");
-const settings = (patch: Record<string, unknown>) => {
-	// "extensions": the folders under extensions/ to turn on, by putting them where pi finds them (.pi/extensions/).
-	const { extensions, ...rest } = patch as { extensions?: string[] };
-	if (extensions) {
-		const dir = path.join(folder(), ".pi", "extensions");
-		fs.rmSync(dir, { recursive: true, force: true });
-		for (const n of extensions) fs.cpSync(path.join(folder(), "extensions", n), path.join(dir, n), { recursive: true });
-	}
-	const file = path.join(folder(), "pi-personal.json");
-	if (Object.keys(rest).length) fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, "utf8")), ...rest }, null, 2));
-};
+const settings = (patch: Record<string, unknown>) => changeSettings(folder(), patch);
 const ext = (name: string, code: string) => {
 	fs.mkdirSync(path.join(folder(), "extensions", name), { recursive: true });
 	fs.writeFileSync(path.join(folder(), "extensions", name, "index.ts"), code);
 };
-const lastStarted = () => [...port.events(P()).events].reverse().find((e) => e.type === "started" && !e.channel)!;
 const restartAndWait = async () => {
 	const from = port.end(P());
 	await t.cli("restart", "main");

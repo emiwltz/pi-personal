@@ -9,12 +9,12 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { type Agent, type AgentRecord, channels, load } from "./agents.ts";
 import { ENV, SETTINGS_FILE } from "./name.ts";
-import { piDir, ROOT } from "./paths.ts";
+import { piDir, ROOT, writeWhole } from "./paths.ts";
 import * as port from "./port.ts";
 
-export const LIMIT = 5; // failed starts...
+const LIMIT = 5; // failed starts...
 const WINDOW_MS = Number(process.env[`${ENV}_WINDOW_MS`] ?? 10 * 60_000); // ...within this window
-export const RETRY_MS = Number(process.env[`${ENV}_RETRY_MS`] ?? 60 * 60_000); // then one attempt per hour
+const RETRY_MS = Number(process.env[`${ENV}_RETRY_MS`] ?? 60 * 60_000); // then one attempt per hour
 const STARTUP_MS = Number(process.env[`${ENV}_STARTUP_MS`] ?? 120_000); // pi must reach the port within this time
 const BACKOFF_MS = [500, 1000, 2000, 4000, 8000];
 const KEEP_DAYS = 30; // taken/ and rejected/ files older than this are removed (the session still knows the ids)
@@ -83,17 +83,10 @@ export function dryStart(agent: Agent, what: { all: true } | { only: string } | 
 	if (agent.settings.model) args.push("--model", agent.settings.model); // pi checks the model while loading
 	// In-agent extensions run with PI_PERSONAL_PORT (docs/port.md): give the check a throwaway port of its own.
 	const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "pi-personal-check-"));
-	const r = spawnSync(process.execPath, [...args, "--no-session", "--mode", "rpc"], {
-		cwd: agent.folder,
-		env: { ...piEnv(agent), PI_OFFLINE: "1", [`${ENV}_PORT`]: path.join(scratch, "port") },
-		input: `${JSON.stringify({ type: "get_state" })}\n`,
-		encoding: "utf8",
-		timeout: 30_000,
-		killSignal: "SIGKILL", // a pi blocked in a loop while loading cannot handle a gentler signal
-	});
+	const r = probe([...args, "--no-session"], agent.folder, { ...piEnv(agent), PI_OFFLINE: "1", [`${ENV}_PORT`]: path.join(scratch, "port") });
 	fs.rmSync(scratch, { recursive: true, force: true });
 	const out = `${r.stderr ?? ""}${r.stdout ?? ""}`;
-	const answered = /"command"\s*:\s*"get_state"/.test(r.stdout ?? "") && /"success"\s*:\s*true/.test(r.stdout ?? "");
+	const answered = r.answered && /"success"\s*:\s*true/.test(r.stdout ?? "");
 	const named = [...out.matchAll(/Failed to load extension "([^"]+)"/g)].map((m) => m[1]);
 	// pi names a failing extension by its real path (on macOS /tmp is /private/tmp): compare real paths.
 	const real = (p: string) => {
@@ -113,23 +106,29 @@ export function dryStart(agent: Agent, what: { all: true } | { only: string } | 
 	return { ok: answered, failing, error };
 }
 
+/** pi started in RPC mode and asked for its state, then closed: does it load, and what did it say? */
+function probe(args: string[], cwd: string, env: NodeJS.ProcessEnv) {
+	const r = spawnSync(process.execPath, [...args, "--mode", "rpc"], {
+		cwd,
+		env,
+		input: `${JSON.stringify({ type: "get_state" })}\n`,
+		encoding: "utf8",
+		timeout: 30_000,
+		killSignal: "SIGKILL", // a pi blocked in a loop while loading cannot handle a gentler signal
+	});
+	return { ...r, answered: /"command"\s*:\s*"get_state"/.test(r.stdout ?? "") };
+}
+
 /**
  * Does pi know this model? Starts pi without extensions, a session or a screen: no network, no credentials needed.
  * An unknown provider is an error; an id pi does not know for a known provider is passed to the provider as it is
  * (pi warns), so it is only a warning.
  */
-export function checkModel(model: string, cwd: string, env: NodeJS.ProcessEnv = process.env): { ok: boolean; warning?: string; error?: string } {
-	const r = spawnSync(process.execPath, [piCli(), "-ne", "--no-session", "--mode", "rpc", "--model", model], {
-		cwd,
-		env: { ...env, PI_CODING_AGENT_DIR: piDir(env), PI_OFFLINE: "1", PI_TELEMETRY: "0", PI_SKIP_VERSION_CHECK: "1" },
-		input: `${JSON.stringify({ type: "get_state" })}\n`,
-		encoding: "utf8",
-		timeout: 30_000,
-		killSignal: "SIGKILL",
-	});
+export function checkModel(model: string, cwd: string): { ok: boolean; warning?: string; error?: string } {
+	const r = probe([piCli(), "-ne", "--no-session", "--model", model], cwd, { ...process.env, PI_CODING_AGENT_DIR: piDir(), PI_OFFLINE: "1", PI_TELEMETRY: "0", PI_SKIP_VERSION_CHECK: "1" });
 	const out = `${r.stderr ?? ""}${r.stdout ?? ""}`;
 	const warning = /Warning: (Model .* not found[^\n]*)/.exec(out)?.[1];
-	if (/"command"\s*:\s*"get_state"/.test(r.stdout ?? "")) return { ok: true, ...(warning ? { warning } : {}) };
+	if (r.answered) return { ok: true, ...(warning ? { warning } : {}) };
 	return { ok: false, error: (/Error: ([^\n]*)/.exec(out)?.[1] ?? out.split("\n").find((l) => l.trim()) ?? "pi did not start").trim() };
 }
 
@@ -168,7 +167,7 @@ function logger(agent: Agent, channel?: string) {
 
 /** How a channel runs: its command, in its own private state folder, told where the port and its secrets are. */
 export function channelProgram(agent: Agent, channel: string): Program {
-	const ch = channels(agent, ROOT).find((c) => c.name === channel);
+	const ch = channels(agent).find((c) => c.name === channel);
 	if (!ch) throw new Error(`channel "${channel}" is not enabled for ${agent.name}`);
 	const state = path.join(agent.paths.channels, channel);
 	fs.mkdirSync(state, { recursive: true, mode: 0o700 });
@@ -188,7 +187,7 @@ export function channelProgram(agent: Agent, channel: string): Program {
 	};
 }
 
-export interface Program {
+interface Program {
 	command: string;
 	args: string[];
 	env: NodeJS.ProcessEnv;
@@ -286,7 +285,7 @@ function releaseLock(file: string): void {
 }
 
 /** What the keeper knows about its program. "pp status" reads it: nothing to search for in the events. */
-export interface KeeperState {
+interface KeeperState {
 	running: boolean; // a runner keeps it (false once it was stopped on request)
 	pid?: number;
 	readyAt?: string; // when the program last became ready
@@ -306,8 +305,7 @@ export function writeKeeper(agent: AgentRecord, channel: string | undefined, sta
 	const file = keeperFile(agent, channel);
 	try {
 		fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-		fs.writeFileSync(`${file}.${process.pid}.tmp`, `${JSON.stringify(state)}\n`, { mode: 0o600 });
-		fs.renameSync(`${file}.${process.pid}.tmp`, file);
+		writeWhole(file, `${JSON.stringify(state)}\n`, 0o600);
 	} catch {} // a full disk: status may be behind, the program runs on
 }
 

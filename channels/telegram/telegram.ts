@@ -34,9 +34,11 @@ interface Settings {
 	apiBase?: string; // another Bot API server, such as a local one; default https://api.telegram.org
 }
 const SETTINGS: Settings = JSON.parse(env("SETTINGS") || "{}"); // this channel's object in pi-personal.json, read at its start
-const settings = () => SETTINGS;
 
 const allowFile = () => path.join(STATE, "allow.json");
+const tokenFile = () => path.join(SECRETS, "telegram-token");
+/** The name a person gave Telegram (first and last), as it is: chosen by them. */
+const nameOf = (u: any): string => [u.first_name, u.last_name].filter(Boolean).join(" ");
 let unreadable = false;
 /** The guest list (Telegram user ids). undefined when it cannot be read: then nothing is decided, nothing is lost. */
 function guests(): string[] | undefined {
@@ -100,9 +102,8 @@ let trying: string | undefined;
 
 function token(): string {
 	if (trying) return trying;
-	const file = path.join(SECRETS, "telegram-token");
 	try {
-		return fs.readFileSync(file, "utf8").trim();
+		return fs.readFileSync(tokenFile(), "utf8").trim();
 	} catch {
 		log(`no bot token: store it with "pp secret set ${env("AGENT")} telegram-token" (it is read from standard input)`);
 		process.exit(2);
@@ -119,11 +120,15 @@ class TelegramError extends Error {
 	}
 }
 
-/** Never let the token reach a log: errors from fetch can quote the URL, which holds it. */
-const redact = (err: unknown) => new Error(String((err as Error)?.message ?? err).replaceAll(token(), "<token>"));
+/** Never let the token reach a log: errors from fetch can quote the URL, which holds it. (An empty token hides nothing.) */
+const hide = (text: string) => {
+	const t = token();
+	return t ? text.replaceAll(t, "<token>") : text;
+};
+const redact = (err: unknown) => new Error(hide(String((err as Error)?.message ?? err)));
 
 async function call(method: string, body: Record<string, unknown>, timeoutMs = 30_000): Promise<any> {
-	const base = settings().apiBase ?? "https://api.telegram.org";
+	const base = SETTINGS.apiBase ?? "https://api.telegram.org";
 	let res: Response;
 	try {
 		res = await fetch(`${base}/bot${token()}/${method}`, {
@@ -136,14 +141,14 @@ async function call(method: string, body: Record<string, unknown>, timeoutMs = 3
 		throw redact(err);
 	}
 	const data = (await res.json().catch(() => ({ ok: false, error_code: res.status, description: res.statusText }))) as any;
-	if (!data.ok) throw new TelegramError(data.error_code ?? res.status, String(data.description ?? "unknown").replaceAll(token(), "<token>"), data.parameters?.retry_after);
+	if (!data.ok) throw new TelegramError(data.error_code ?? res.status, hide(String(data.description ?? "unknown")), data.parameters?.retry_after);
 	return data.result;
 }
 
 async function download(fileId: string, name: string): Promise<string> {
 	const f = await call("getFile", { file_id: fileId });
 	if (!f.file_path) throw new Error("Telegram gave no file path (files over 20 MB cannot be downloaded by bots)");
-	const base = settings().apiBase ?? "https://api.telegram.org";
+	const base = SETTINGS.apiBase ?? "https://api.telegram.org";
 	const res = await fetch(`${base}/file/bot${token()}/${f.file_path}`, { signal: AbortSignal.timeout(120_000) }).catch((err) => {
 		throw redact(err);
 	});
@@ -208,7 +213,7 @@ function readEvents(from: number): { list: { e: any; after: number }[]; next: nu
 // ---- receiving ------------------------------------------------------------------------------------------------
 
 function recordStranger(m: any): void {
-	const who = { id: m.from.id, username: m.from.username ?? null, name: [m.from.first_name, m.from.last_name].filter(Boolean).join(" ") };
+	const who = { id: m.from.id, username: m.from.username ?? null, name: nameOf(m.from) };
 	const file = path.join(STATE, "unlisted.jsonl");
 	const seen = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
 	if (!seen.includes(`"id":${who.id},`)) fs.appendFileSync(file, `${JSON.stringify({ ...who, at: new Date().toISOString() })}\n`, { mode: 0o600 });
@@ -250,11 +255,10 @@ async function handle(u: any, allowed: string[]): Promise<void> {
 	});
 }
 
-/** Who wrote, for the agent: the name the person gave Telegram, which anyone can choose, and the id, which is theirs. */
 /** Who wrote a forwarded message, as far as Telegram says: a name in quotes (chosen by them), or "someone". */
 function forwardedFrom(m: any): string | undefined {
 	const o = m.forward_origin;
-	const raw = o ? (o.sender_user ? [o.sender_user.first_name, o.sender_user.last_name].filter(Boolean).join(" ") : (o.sender_user_name ?? o.chat?.title ?? "")) : m.forward_from ? [m.forward_from.first_name, m.forward_from.last_name].filter(Boolean).join(" ") : (m.forward_sender_name ?? m.forward_from_chat?.title);
+	const raw = o ? (o.sender_user ? nameOf(o.sender_user) : (o.sender_user_name ?? o.chat?.title ?? "")) : m.forward_from ? nameOf(m.forward_from) : (m.forward_sender_name ?? m.forward_from_chat?.title);
 	if (raw === undefined && !o) return undefined;
 	const name = String(raw ?? "").replace(/["“”«»()[\]{}\r\n\t]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 64);
 	return name ? `"${name}"` : "someone";
@@ -263,7 +267,7 @@ function forwardedFrom(m: any): string | undefined {
 /** Who wrote, for the agent's "From:" line. The name is chosen by whoever writes: it comes in quotes, without quotes,
  * brackets or line ends of its own, so it can never pass for what this channel writes ("the owner", an id). */
 export const whoOf = (f: any, ownerId = owner()) => {
-	const name = [f.first_name, f.last_name].filter(Boolean).join(" ").replace(/["“”«»()[\]{}\r\n\t]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 64) || "someone";
+	const name = nameOf(f).replace(/["“”«»()[\]{}\r\n\t]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 64) || "someone";
 	const handle = typeof f.username === "string" && /^\w{1,32}$/.test(f.username) ? `, @${f.username}` : "";
 	return `${String(f.id) === ownerId ? "the owner, " : ""}"${name}" (Telegram user ${f.id}${handle})`;
 };
@@ -524,10 +528,9 @@ export function findToken(text: string): string | undefined {
 
 /** `pp setup` runs this before the channel starts: it stores the bot's token and lets the first person in. */
 async function setup(): Promise<void> {
-	const tokenFile = path.join(SECRETS, "telegram-token");
 	const refusal = (err: unknown) => err instanceof TelegramError && (err.code === 401 || err.code === 404);
 	let me: any;
-	if (fs.existsSync(tokenFile))
+	if (fs.existsSync(tokenFile()))
 		me = await call("getMe", {}, 15_000).catch((err) => {
 			if (refusal(err)) console.log("  ! Telegram refuses the token stored earlier: it was replaced or revoked. A new one is needed.");
 			return undefined;
@@ -558,8 +561,8 @@ async function setup(): Promise<void> {
 		trying = undefined;
 		if (!me) continue;
 		fs.mkdirSync(SECRETS, { recursive: true, mode: 0o700 });
-		fs.writeFileSync(tokenFile, `${tok}\n`, { mode: 0o600 });
-		fs.chmodSync(tokenFile, 0o600);
+		fs.writeFileSync(tokenFile(), `${tok}\n`, { mode: 0o600 });
+		fs.chmodSync(tokenFile(), 0o600);
 		console.log(`  ✔ bot @${me.username} answers; its token is stored`);
 	}
 	if (guests()?.length) {
@@ -578,7 +581,7 @@ async function setup(): Promise<void> {
 	const since = Math.floor(Date.now() / 1000) - 5;
 	const until = Date.now() + 10 * 60_000;
 	const seen = new Set<number>();
-	let told = "";
+	let problem = ""; // the last one said: each is said once
 	while (Date.now() < until) {
 		let ups: any[] = [];
 		try {
@@ -586,8 +589,8 @@ async function setup(): Promise<void> {
 		} catch (err) {
 			const why =
 				err instanceof TelegramError && err.code === 409 ? "another program reads this bot, or a webhook is set (Telegram allows one reader)" : (err as Error).message;
-			if (why !== told) console.log(`  ! Telegram: ${why}; trying again...`);
-			told = why;
+			if (why !== problem) console.log(`  ! Telegram: ${why}; trying again...`);
+			problem = why;
 			await sleep(err instanceof TelegramError && err.retryAfter ? err.retryAfter * 1000 : 5000);
 			continue;
 		}
@@ -597,7 +600,7 @@ async function setup(): Promise<void> {
 			seen.add(u.update_id);
 			const m = u.message;
 			if (!m?.from || m.from.is_bot || m.chat?.type !== "private" || (m.date ?? 0) < since) continue;
-			const who = [m.from.first_name, m.from.last_name].filter(Boolean).join(" ") || "someone";
+			const who = nameOf(m.from) || "someone";
 			console.log(`  ✔ ${who}${m.from.username ? ` (@${m.from.username})` : ""}, Telegram user ${m.from.id}, wrote: "${String(m.text ?? "(an attachment)").slice(0, 60)}"`);
 			// No default: Enter alone neither lets a stranger in nor refuses the owner.
 			let yes: boolean | undefined;
@@ -658,7 +661,7 @@ async function main(args: string[]): Promise<void> {
 		// Run by `pp doctor`: one line per check, "ok", "note" or "FAIL", then the text.
 		let tok = "";
 		try {
-			tok = fs.readFileSync(path.join(SECRETS, "telegram-token"), "utf8").trim();
+			tok = fs.readFileSync(tokenFile(), "utf8").trim();
 		} catch {}
 		if (!tok) console.log(`FAIL  bot token missing: pp secret set ${env("AGENT")} telegram-token`);
 		else

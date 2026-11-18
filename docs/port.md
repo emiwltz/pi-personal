@@ -35,7 +35,7 @@ Write one JSON file into `inbox/`, named after the message's identifier:
 | `text` | yes | The message. May be empty if there are attachments. |
 | `attachments` | no | Absolute paths of files the agent should look at. They are given to the agent as paths; Pi-Personal does not read, convert or delete them. |
 | `from` | no | The channel's own data about the message (for example the message to quote in the answer): any JSON object of at most 4 KB. Pi-Personal stores it and gives it back, unchanged, on the events that answer this message; it never reads it. It is not an address: `conversation` is. |
-| `conversation` | no | Which conversation the message belongs to, and so where its answer goes: a string of up to 200 characters, the same for every message of one conversation, `<channel>:<the service's own id>` (`telegram:4242`, `mail:alice@example.com`). The channel that owns the prefix routes the answers. The agent answers one conversation at a time: a reply never mixes two of them. Messages without it all belong to one shared conversation. |
+| `conversation` | no | Which conversation the message belongs to, and so where its answer goes: a string of up to 200 characters, the same for every message of one conversation, `<channel>:<the service's own id>` (`telegram:4242`, `mail:alice@example.com`). The channel that owns the prefix routes the answers. The agent answers one conversation at a time: a reply never mixes two of them. Messages without it all belong to one shared conversation. (`pp send` writes `cli` unless `--conversation` says otherwise.) |
 
 **Write it atomically**, so the agent never sees half a file:
 
@@ -72,7 +72,7 @@ Files whose name starts with a dot, and anything that is not a regular file, are
 | `error` | `error`, `refs`, and `retryAt` when it will be tried again | Trouble that does not end the message's run: the message was not taken in yet and will be tried again at `retryAt`. `refs` is empty when the trouble concerns no message in particular (the bridge itself). |
 | `settled` | `refs`, and `error` when the message got no full reply | The last word of a run: the agent finished with this message and will not continue by itself. `error` says why (the provider refused, the run ended without an answer or was cut short, the agent was stopped on purpose, the owner took over in the terminal); its text is for people, not a contract. A run started by text typed in the terminal settles with `refs: []`. Match a `settled` to your message by its `refs`. |
 | `status` | `state`, and `kind`, `question` when blocked | `working`, `idle` or `blocked`. When blocked, `kind` is what pi waits for: `select`, `confirm`, `input`, `editor` or `custom`. |
-| `started` | `pid`, `safeMode` | The agent's session is up and reading the port. `safeMode` lists the agent's extensions turned off (safe mode), or is `null`. |
+| `started` | `pid`, `safeMode`, or `pid`, `channel` | The agent's session is up and reading the port. `safeMode` lists the agent's extensions turned off (safe mode), or is `null`. With `channel`: that channel's program started. |
 | `restarted` | `reason` | The keeper is starting the agent again, and why. |
 | `safe_mode` | `extensions`, `off`, `reason` | `extensions` failed to load, so the agent runs with only Pi-Personal's bridge: every extension listed in `off` (and any pi finds by itself) is turned off. Safe mode ends at the next start once they load again. |
 | `failed` | `reason`, `retryAt` | The agent failed to start too many times. The keeper will try again at `retryAt`. |
@@ -84,7 +84,7 @@ Events about a channel rather than the agent carry `"channel": "<name>"` (for ex
 
 **One message, one run, one last word.** The agent works on one message at a time; a message that arrives meanwhile waits its turn (see Order). Each message ends with a `settled` event naming it: with its replies (`message` events) before it, or with an `error` on it when there was none. Tell the sender: silence is the worst answer.
 
-**`blocked`.** When the agent waits for a person (a permission or a question), the `status` event says `state: "blocked"` with the `kind` and, when the harness gives it, the `question` text. Pi-Personal never answers. Messages sent meanwhile wait in `inbox/` and are taken in once the agent can read them.
+**`blocked`.** When the agent waits for a person (a question asked by one of pi's extensions, a permission for example), the `status` event says `state: "blocked"` with the `kind` and, when the harness gives it, the `question` text. Pi-Personal never answers. Messages sent meanwhile wait in `inbox/` and are taken in once the agent can read them.
 
 New event types and fields may appear in later versions of protocol 1. Ignore what you do not know.
 

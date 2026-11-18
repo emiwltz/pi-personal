@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { COMMAND, PRODUCT, SETTINGS_FILE, SLUG } from "./name.ts";
-import { type AgentPaths, agentPaths, home, NAME_MAX, NAME_RE, piDir, privateDir, ROOT } from "./paths.ts";
+import { type AgentPaths, agentPaths, home, NAME_MAX, NAME_RE, piDir, privateDir, ROOT, writeWhole } from "./paths.ts";
 import { ensurePort } from "./port.ts";
 
 export const CHANNEL_RE = /^[a-z][a-z0-9-]{0,8}$/;
@@ -106,9 +106,7 @@ function writeSettings(folder: string, settings: Settings): void {
 	const file = path.join(folder, SETTINGS_FILE);
 	const { problems: _p, ...clean } = settings;
 	settings = clean;
-	const tmp = `${file}.tmp`;
-	fs.writeFileSync(tmp, `${JSON.stringify(settings, null, 2)}\n`);
-	fs.renameSync(tmp, file);
+	writeWhole(file, `${JSON.stringify(settings, null, 2)}\n`);
 }
 
 /**
@@ -222,14 +220,29 @@ export function list(): string[] {
 	}
 }
 
+/** Turn a channel on in the settings file; its own settings stay, and `command` (a program of one's own) is set if given. */
+export function turnOn(folder: string, channel: string, command?: string[]): void {
+	editSettings(folder, (s) => {
+		const prev = s.channels?.[channel];
+		const own = typeof prev === "object" && prev !== null && !Array.isArray(prev) ? prev : {};
+		s.channels = { ...(s.channels ?? {}), [channel]: { ...own, enabled: true, ...(command?.length ? { command } : {}) } };
+	});
+}
+
+/** The same agent with a channel turned on, without writing anything: to run that channel's own setup or commands first. */
+export const withChannel = <T extends Pick<Agent, "settings">>(agent: T, channel: string): T => ({
+	...agent,
+	settings: { ...agent.settings, channels: { ...(agent.settings.channels ?? {}), [channel]: { enabled: true } } },
+});
+
 /** Channels this agent runs, with the command that runs each. */
-export function channels(agent: Pick<Agent, "settings">, root: string): { name: string; command: string[]; settings: ChannelSettings }[] {
+export function channels(agent: Pick<Agent, "settings">): { name: string; command: string[]; settings: ChannelSettings }[] {
 	return Object.entries(agent.settings.channels ?? {})
 		.filter(([, ch]) => ch.enabled !== false)
 		.map(([name, ch]) => ({
 			name,
 			settings: ch,
-			command: ch.command ?? [process.execPath, path.join(root, "channels", name, `${name}.ts`)],
+			command: ch.command ?? [process.execPath, path.join(ROOT, "channels", name, `${name}.ts`)],
 		}));
 }
 

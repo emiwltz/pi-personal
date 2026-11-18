@@ -14,6 +14,16 @@ export function home(env: NodeJS.ProcessEnv = process.env): string {
 	return path.join(state, SLUG);
 }
 
+/** Write a file whole or not at all: written beside it, then renamed, so a reader never sees half of it. */
+export function writeWhole(file: string, text: string, mode?: number): void {
+	const tmp = `${file}.${process.pid}.tmp`;
+	fs.writeFileSync(tmp, text, mode === undefined ? undefined : { mode });
+	fs.renameSync(tmp, file);
+}
+
+/** A path as a person writes it: ~/… for what is under their home. */
+export const tilde = (p: string) => (process.env.HOME && p.startsWith(`${process.env.HOME}/`) ? `~${p.slice(process.env.HOME.length)}` : p);
+
 /** The default parent of agents' visible folders, proposed by `init`. */
 export function defaultFolderParent(): string {
 	return path.join(os.homedir(), SLUG);
@@ -27,11 +37,15 @@ export interface AgentPaths {
 	secrets: string;
 	channels: string; // per-channel state
 	log: string; // the keeper's plain-text log for this agent
-	stopped: string; // present when the user stopped the agent on purpose
+	stopped: string; // present when the user stopped the agent on purpose (written by stop before it stops pi)
+	wasStopped: string; // start after a stop: the conversation is not resumed (used up by the bridge)
+	lastError: string; // last-error.json: the last error the bridge saw, read by status
 }
 
-export function agentPaths(name: string, env: NodeJS.ProcessEnv = process.env): AgentPaths {
-	const dir = path.join(home(env), "agents", name);
+export const agentPaths = (name: string): AgentPaths => filesIn(path.join(home(), "agents", name));
+
+/** The files of an agent's private area `dir` (the bridge knows only that folder: its port's parent). */
+export function filesIn(dir: string): AgentPaths {
 	return {
 		dir,
 		record: path.join(dir, "agent.json"),
@@ -41,6 +55,8 @@ export function agentPaths(name: string, env: NodeJS.ProcessEnv = process.env): 
 		channels: path.join(dir, "channels"),
 		log: path.join(dir, "log.txt"),
 		stopped: path.join(dir, "stopped"),
+		wasStopped: path.join(dir, "was-stopped"),
+		lastError: path.join(dir, "last-error.json"),
 	};
 }
 

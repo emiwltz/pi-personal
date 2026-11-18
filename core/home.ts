@@ -9,10 +9,8 @@ import { hint, say, style } from "./ask.ts";
 import * as control from "./control.ts";
 import * as herdr from "./herdr.ts";
 import { COMMAND, ENV, PRODUCT } from "./name.ts";
-import { ROOT } from "./paths.ts";
+import { ROOT, tilde } from "./paths.ts";
 import * as screen from "./screen.ts";
-
-const tilde = (p: string) => (process.env.HOME && p.startsWith(`${process.env.HOME}/`) ? `~${p.slice(process.env.HOME.length)}` : p);
 
 export async function home(version: string): Promise<number> {
 	return ask.interactive() ? live(version) : overview(version);
@@ -44,15 +42,15 @@ async function snapshot(): Promise<Snapshot> {
 }
 
 /** How an agent is, in a sign, a word, an optional line of detail, and what Enter does. */
-interface Look {
+interface Verdict {
 	sign: string;
 	word: string;
 	detail?: string;
 	action: "open" | "start" | "restart" | "doctor" | "status";
 	label: string; // what Enter says it does
 }
-function look(l: screen.Look, row: Row, up: boolean, t: number): Look {
-	const off = (word: string, detail?: string): Look => ({ sign: screen.second(l, "○"), word: screen.second(l, word), detail, action: "start", label: `start ${row.name}` });
+function look(l: screen.Look, row: Row, up: boolean, t: number): Verdict {
+	const off = (word: string, detail?: string): Verdict => ({ sign: screen.second(l, "○"), word: screen.second(l, word), detail, action: "start", label: `start ${row.name}` });
 	if (!up) return off("not running", "Herdr Core is not running; Enter starts both");
 	if (row.error) return { sign: screen.broken(l, "✘"), word: screen.broken(l, "broken"), detail: row.error, action: "doctor", label: "see why" };
 	const s = row.s as control.AgentStatus;
@@ -309,10 +307,10 @@ async function back(l: screen.Look, label = "back", note?: string): Promise<void
 // ---- outside a terminal: plain text, with the next thing to do ----------------------------------------------------------------
 async function overview(version: string): Promise<number> {
 	const names = agents.list();
-	say(`${style.bold(PRODUCT)} ${style.dim(version)}`);
+	say(`${style.bright(PRODUCT)} ${style.second(version)}`);
 	if (!names.length) {
 		say("\nYour own agent, living in Herdr Core, reachable from anywhere. Nothing is set up yet.");
-		say(`\n  Start here:  ${style.cyan(`${COMMAND} setup`)}`);
+		say(`\n  Start here:  ${style.yours(`${COMMAND} setup`)}`);
 		say(`  Everything:  ${COMMAND} help`);
 		return 0;
 	}
@@ -321,7 +319,7 @@ async function overview(version: string): Promise<number> {
 	say("");
 	for (const name of names) {
 		if (!running) {
-			say(`  ${style.bold(name)}  ${style.dim("not running (Herdr Core is not running)")}`);
+			say(`  ${style.bright(name)}  ${style.second("not running (Herdr Core is not running)")}`);
 			next.add(`Start it:      ${COMMAND} start${names.length > 1 ? " --all" : ""}`);
 			continue;
 		}
@@ -329,13 +327,13 @@ async function overview(version: string): Promise<number> {
 		try {
 			s = control.status(name);
 		} catch (err) {
-			say(`  ${style.bold(name)}  ${style.red(`broken: ${(err as Error).message}`)}`);
+			say(`  ${style.bright(name)}  ${style.broken(`broken: ${(err as Error).message}`)}`);
 			next.add(`See why:       ${COMMAND} doctor`);
 			continue;
 		}
-		const state = s.failed ? style.red("cannot start") : s.state === "blocked" ? style.yellow("waiting for you") : s.running ? style.green(s.state) : style.dim(s.state);
-		const channels = s.channels.map((c) => `${c.name} ${c.failed ? style.red("failed") : c.running ? style.green("on") : style.dim("off")}`);
-		say(`  ${style.bold(name)}  ${state}  ${style.dim(s.model ?? "no model")}${channels.length ? `  ${style.dim("·")} ${channels.join(", ")}` : ""}`);
+		const state = s.failed ? style.broken("cannot start") : s.state === "blocked" ? style.yours("waiting for you") : s.running ? style.alive(s.state) : style.second(s.state);
+		const channels = s.channels.map((c) => `${c.name} ${c.failed ? style.broken("failed") : c.running ? style.alive("on") : style.second("off")}`);
+		say(`  ${style.bright(name)}  ${state}  ${style.second(s.model ?? "no model")}${channels.length ? `  ${style.second("·")} ${channels.join(", ")}` : ""}`);
 		const who = names.length > 1 ? ` ${name}` : "";
 		if (s.failed) {
 			hint(s.failed.reason);
@@ -350,8 +348,7 @@ async function overview(version: string): Promise<number> {
 		} else if (!s.running) next.add(`Start it:      ${COMMAND} start${who}`);
 		else {
 			if (s.state === "blocked") next.add(`Answer it:     ${COMMAND} attach${who}`);
-			next.add(`Talk to it:    ${COMMAND} chat${who}`);
-			next.add(`Watch it work: ${COMMAND} attach${who}`);
+			next.add(`Open it:       ${COMMAND} attach${who}`);
 			if (!s.channels.length) next.add(`From Telegram: ${COMMAND} setup`);
 		}
 		if (s.lastError && !s.failed) hint(`last error (${s.lastError.at}): ${s.lastError.error}`);

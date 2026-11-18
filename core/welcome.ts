@@ -7,17 +7,15 @@ import * as path from "node:path";
 import * as agents from "./agents.ts";
 import * as ask from "./ask.ts";
 import * as bridge from "./bridge.ts";
-import { hint, say, style } from "./ask.ts";
+import { hint, say } from "./ask.ts";
 import * as control from "./control.ts";
 import * as herdr from "./herdr.ts";
 import { COMMAND, PRODUCT, SETTINGS_FILE } from "./name.ts";
-import { defaultFolderParent, ROOT } from "./paths.ts";
+import { defaultFolderParent, ROOT, tilde } from "./paths.ts";
 import * as port from "./port.ts";
 import * as providers from "./providers.ts";
 import { channelProgram, checkModel, piPackage } from "./runner.ts";
 import * as screen from "./screen.ts";
-
-const tilde = (p: string) => (process.env.HOME && p.startsWith(`${process.env.HOME}/`) ? `~${p.slice(process.env.HOME.length)}` : p);
 
 // ---- `pp setup`: five steps, each drawn with its line in the margin; run again, it keeps what is done ---------------------
 const STEPS = ["This machine", "A model", "Your agent", "Reach it", "Stay alive"];
@@ -89,7 +87,7 @@ async function machine(): Promise<boolean> {
 	const l = look();
 	ask.ok(`${process.platform === "darwin" ? "macOS" : "Linux"} ${os.arch()} · Node.js ${process.versions.node} · pi ${piPackage().version}`);
 	let hc = herdr.find();
-	if (hc) ask.ok(`Herdr Core ${hc.version} found (${tilde(hc.bin.includes("/") ? hc.bin : (spawnSync("sh", ["-c", `command -v ${hc.bin}`], { encoding: "utf8" }).stdout.trim() || hc.bin))}): ${PRODUCT} uses it as it is`);
+	if (hc) ask.ok(`Herdr Core ${hc.version} found (${tilde(herdr.fullPath(hc.bin))}): ${PRODUCT} uses it as it is`);
 	else {
 		say(`  ${screen.second(l, "Herdr Core is not on this machine.")} ${PRODUCT} runs your agent inside it: a small program that keeps`);
 		say("  terminals alive in the background, so your agent keeps working when you close this window.");
@@ -144,18 +142,8 @@ async function signIn(p: providers.Provider): Promise<boolean> {
 			{ label: "With an API key", value: true },
 		]);
 	hint(key ? "pi asks for the key here: paste it, then Enter. A first real answer checks it, in step 3." : "pi signs you in here: a browser opens, or pi shows a link and a code.");
-	const kept = ask.marginNow();
-	ask.margin("");
 	// Ctrl+C belongs to pi's sign-in (it cancels it); the guide goes on.
-	const keep = () => {};
-	process.on("SIGINT", keep);
-	let code: number;
-	try {
-		code = await providers.login([p.id, ...(key ? ["--api-key"] : [])]);
-	} finally {
-		process.off("SIGINT", keep);
-		ask.margin(kept);
-	}
+	const code = await handOver(() => providers.login([p.id, ...(key ? ["--api-key"] : [])]));
 	if (code !== 0) {
 		ask.warn(`${p.name}: not connected (pi said why, above).`);
 		return false;
@@ -169,19 +157,25 @@ async function signIn(p: providers.Provider): Promise<boolean> {
 	return false;
 }
 
-/** pi's own screen, in this terminal; Ctrl+C belongs to it. */
-function piScreen(): void {
-	hint("pi opens here: /login connects a provider, /model chooses the model (Ctrl+S keeps it), /quit comes back.");
+/** The terminal is handed to another program (pi, a channel's setup): no margin, and Ctrl+C is that program's (it
+ * cancels what it does there); the guide goes on after it. */
+async function handOver<T>(run: () => T | Promise<T>): Promise<T> {
 	const kept = ask.marginNow();
 	ask.margin("");
 	const keep = () => {};
 	process.on("SIGINT", keep);
 	try {
-		providers.openPi();
+		return await run();
 	} finally {
 		process.off("SIGINT", keep);
 		ask.margin(kept);
 	}
+}
+
+/** pi's own screen, in this terminal. */
+async function piScreen(): Promise<void> {
+	hint("pi opens here: /login connects a provider, /model chooses the model (Ctrl+S keeps it), /quit comes back.");
+	await handOver(() => providers.openPi());
 }
 
 /** The model a provider starts with: pi's own choice for it, or the first pi lists. */
@@ -229,7 +223,7 @@ async function model(existing: boolean, current?: string): Promise<{ model?: str
 			ask.fail(`This step needs a terminal. Later: ${COMMAND} setup, or ${COMMAND} login <provider> --api-key`);
 			break;
 		}
-		if (choice === "pi") piScreen();
+		if (choice === "pi") await piScreen();
 		else {
 			if (!conn.length) hint(`pi signs in to these; ${PRODUCT} keeps nothing of it but what pi stores, in its own pi settings.`);
 			const id = await ask.choose("Which provider?", [
@@ -263,7 +257,6 @@ async function model(existing: boolean, current?: string): Promise<{ model?: str
 		end(`connected: ${conn.map(name).join(", ")}`);
 		return { connected: true };
 	}
-	// The model: pi's default when it has one; for a provider connected now, pi's own choice for it.
 	// The agent's own model first, in the menu; pi's default otherwise; for a provider connected now, pi's choice for it.
 	let m = just ? await firstModel(just, list) : current && list.some((x) => `${x.provider}/${x.id}` === current) ? current : await providers.chosenModel(list);
 	if (!m) {
@@ -352,7 +345,7 @@ async function hello(name: string, created: boolean): Promise<boolean> {
 		end(`${name} is not running`, false);
 		return false;
 	}
-	ask.say(`  ${screen.star(l)} ${screen.bright(l, `${name} is alive.`, true)}`);
+	say(`  ${screen.star(l)} ${screen.bright(l, `${name} is alive.`, true)}`);
 	const a = agents.loadRecord(name);
 	let said: string[] = [];
 	let error: string | undefined;
@@ -375,10 +368,10 @@ async function hello(name: string, created: boolean): Promise<boolean> {
 		const p = (await providers.providers()).find((x) => x.id === provider);
 		if (!(await ask.confirm(`Sign in to ${p?.name ?? provider} again?`))) break;
 		if (p) await signIn(p);
-		else piScreen();
+		else await piScreen();
 		({ said, error } = await ask_());
 	}
-	if (said.length) for (const line of said.join("\n").split("\n")) ask.say(`  ${screen.alive(l, `${name} ›`)} ${line}`);
+	if (said.length) for (const line of said.join("\n").split("\n")) say(`  ${screen.alive(l, `${name} ›`)} ${line}`);
 	else ask.warn(`no answer yet${error ? `: ${error}` : ""}. See: ${COMMAND} status`);
 	end(said.length ? `${name} is alive, and answered` : `${name} is running, but has not answered yet`, said.length > 0);
 	return said.length > 0;
@@ -429,28 +422,19 @@ async function reach(name: string): Promise<string[]> {
 			{ label: `Yes, set up ${title} now`, value: true, note: "about 2 minutes" },
 		]);
 		if (!now) continue;
-		const p = channelProgram({ ...a, settings: { ...a.settings, channels: { ...(a.settings.channels ?? {}), [ch]: { enabled: true } } } }, ch);
+		const p = channelProgram(agents.withChannel(a, ch), ch);
 		// Ctrl+C belongs to the channel's setup (it skips that step); the guide goes on.
-		const keep = () => {};
-		process.on("SIGINT", keep);
-		const kept = ask.marginNow();
-		ask.margin("");
-		const r = spawnSync(p.command, [...p.args, "setup"], { stdio: "inherit", cwd: p.cwd, env: p.env });
-		ask.margin(kept);
-		process.off("SIGINT", keep);
+		const r = await handOver(() => spawnSync(p.command, [...p.args, "setup"], { stdio: "inherit", cwd: p.cwd, env: p.env }));
 		if (r.status !== 0) {
 			if (r.status !== 3) ask.fail(`${title} is not set up. Later: ${COMMAND} setup`);
 			continue;
 		}
-		agents.editSettings(a.folder, (s) => {
-			const prev = s.channels?.[ch];
-			s.channels = { ...(s.channels ?? {}), [ch]: { ...(typeof prev === "object" && prev ? prev : {}), enabled: true } };
-		});
+		agents.turnOn(a.folder, ch);
 		const u = control.up(name);
 		ask.ok(`${title}: on${u.started.includes(ch) ? ", and running" : ""}`);
 		on.push(title);
 	}
-	end(on.length ? `${on.join(", ")}: on` : `from this machine for now (${COMMAND} chat); ${COMMAND} setup adds a channel later`, true);
+	end(on.length ? `${on.join(", ")}: on` : `from this machine for now (${COMMAND}); ${COMMAND} setup adds a channel later`, true);
 	return on;
 }
 
@@ -459,7 +443,7 @@ async function stay(name: string): Promise<boolean> {
 	begin(5);
 	// It runs `pp up --if-running`: at login and every 5 minutes, it brings back what should run, as long as Herdr Core
 	// runs, or after a restart of the machine when it may start Herdr Core (below).
-	const { serviceInstalled, serviceInstall } = await import("./setup.ts");
+	const { serviceInstalled, serviceInstall, bootAllowed, allowBoot } = await import("./setup.ts");
 	let on = serviceInstalled();
 	if (!on && (await ask.confirm(`Bring ${name} back by itself if it stops? (checked at login and every 5 minutes)`))) {
 		try {
@@ -471,7 +455,6 @@ async function stay(name: string): Promise<boolean> {
 	}
 	// After a restart of the machine: the service may start Herdr Core too. Without asking when Pi-Personal installed
 	// it (nothing else of the person's runs there); with a yes when it is the person's own (default no).
-	const { bootAllowed, allowBoot } = await import("./setup.ts");
 	let boot = on && bootAllowed();
 	if (on && !boot) {
 		if (herdr.installedByUs()) boot = true;
@@ -554,7 +537,6 @@ export async function setup(version: string): Promise<number> {
 		const channels = await reach(name);
 		await stay(name);
 		// What now: the one thing to do first, then the rest.
-		const who = agents.list().length > 1 ? ` ${name}` : "";
 		say("");
 		say(
 			!ok
@@ -566,7 +548,6 @@ export async function setup(version: string): Promise<number> {
 		say("");
 		const row = (label: string, what: string) => say(`  ${label.padEnd(18)}${what}`);
 		say(`  ${screen.yours(l, "Open it:".padEnd(18), true)}${screen.bright(l, COMMAND, true)}   ${screen.second(l, "(Enter opens it, ctrl+\\ comes back)")}`);
-		row("Talk to it here:", `${COMMAND} chat${who}`);
 		if (channels.length) row("From your phone:", `write to it on ${channels.join(", ")}`);
 		row("Everything:", `${COMMAND} help`);
 		return ok ? 0 : 1;

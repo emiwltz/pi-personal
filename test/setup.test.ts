@@ -52,7 +52,7 @@ test("pp setup: keeps the connected provider, creates main with pi's model, star
 	assert.match(r.out, /main created in \S+, with fake\/echo-1/);
 	assert.match(r.out, /main › echo: Hello! I have just set you up/);
 	assert.match(r.out, /Open it: +pp /);
-	assert.match(r.out, /Talk to it here: +pp chat/);
+	assert.doesNotMatch(r.out, /pp chat/, "pp, then Enter: the one way to talk to it");
 	assert.ok(fs.existsSync(path.join(t.dir, "home", "agents", "main")), "the agent's record is in the private area");
 	assert.equal(JSON.parse(fs.readFileSync(path.join(t.env.HOME ?? "", "pi-personal", "main", "pi-personal.json"), "utf8")).model, "fake/echo-1");
 });
@@ -68,8 +68,7 @@ test("pp alone, with an agent: how it is, and what to do next", async () => {
 	const r = await t.cli();
 	assert.equal(r.code, 0, r.stderr);
 	assert.match(r.stdout, /main {2}(idle|working)/);
-	assert.match(r.stdout, /Talk to it: +pp chat/);
-	assert.match(r.stdout, /Watch it work: pp attach/);
+	assert.match(r.stdout, /Open it: +pp attach/);
 });
 
 test("with one agent, commands need no name", async () => {

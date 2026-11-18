@@ -6,7 +6,7 @@ import * as path from "node:path";
 import * as agents from "./agents.ts";
 import * as control from "./control.ts";
 import * as herdr from "./herdr.ts";
-import { COMMAND, ENV, PRODUCT, SLUG } from "./name.ts";
+import { COMMAND, ENV, PRODUCT, SETTINGS_FILE, SLUG } from "./name.ts";
 import { home, piDir, ROOT } from "./paths.ts";
 import { channelProgram, checkExtension, checkModel, foundExtensions, piCli, piPackage } from "./runner.ts";
 
@@ -68,9 +68,7 @@ const systemctl = (...args: string[]) => execFileSync(process.env[`${ENV}_SYSTEM
 function hcPath(): string {
 	const found = herdr.find();
 	if (!found) throw new Error(`Herdr Core's hc command was not found: ${COMMAND} setup installs it`);
-	if (found.bin.includes("/")) return found.bin;
-	const r = spawnSync("sh", ["-c", `command -v ${found.bin}`], { encoding: "utf8" });
-	return r.stdout.trim() || found.bin;
+	return herdr.fullPath(found.bin);
 }
 
 /** The command the service runs: `up`, with everything it needs spelled out (a service starts with almost no environment). */
@@ -247,13 +245,13 @@ export async function doctor(): Promise<Check[]> {
 			else if (check(process.env))
 				add("warn", `agent ${name}: model ${model}`, `its key is only in this shell's environment, which the agent may not get; store it for all agents: ${COMMAND} login ${provider} --api-key`);
 			else add(false, `agent ${name}: model ${model}`, `not signed in: ${COMMAND} login ${provider}`);
-		} else add("warn", `agent ${name}: no model set`, `pi will use its default; set "model" in ${path.join(agent.folder, "pi-personal.json")}`);
+		} else add("warn", `agent ${name}: no model set`, `pi will use its default; set "model" in ${path.join(agent.folder, SETTINGS_FILE)}`);
 		for (const e of foundExtensions(agent)) {
 			const c = checkExtension(agent, e);
 			add(c.ok, `agent ${name}: extension ${e}`, c.ok ? "loads" : c.error);
 		}
 		// Each channel checks itself (its secrets, its settings): the core knows nothing about any messaging service.
-		for (const ch of agents.channels(agent, ROOT)) {
+		for (const ch of agents.channels(agent)) {
 			if (ch.settings.command !== undefined || !agents.shipped(ch.name)) {
 				// A program of your own is not run by doctor: it may not know what "check" means.
 				add("warn", `agent ${name}: channel ${ch.name}`, `your own program (${ch.command.join(" ")}); if it has a check: ${COMMAND} channel ${name} ${ch.name} check`);
@@ -348,7 +346,7 @@ export async function uninstall(purge: boolean): Promise<string[]> {
 	return done;
 }
 
-export async function setup(cmd: string, args: string[], opt: Record<string, string | true>): Promise<number> {
+export async function maintain(cmd: string, args: string[], opt: Record<string, string | true>): Promise<number> {
 	const json = !!opt.json;
 	if (cmd === "doctor") {
 		const checks = await doctor();

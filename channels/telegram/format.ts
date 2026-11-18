@@ -39,7 +39,6 @@ export function toHtml(markdown: string): string {
 	const fence = /^```([\w+#.-]*)[ \t]*\n([\s\S]*?)(?:^```[ \t]*$|(?![\s\S]))/gm;
 	let last = 0;
 	for (let m = fence.exec(markdown); m; m = fence.exec(markdown)) {
-		if (m[0] === "") break;
 		out.push(inline(markdown.slice(last, m.index)));
 		const lang = m[1] ? ` class="language-${attr(m[1])}"` : "";
 		out.push(`<pre><code${lang}>${esc(m[2].replace(/\n$/, ""))}</code></pre>`);

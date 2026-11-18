@@ -2,14 +2,11 @@
 // errors, one folder per agent, the installer's command.
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { promisify } from "node:util";
 import * as port from "../core/port.ts";
-import { type Env, ROOT, setup } from "./helpers.ts";
+import { type Env, ROOT, run, setup } from "./helpers.ts";
 
-const run = promisify(execFile);
 let t: Env;
 const folder = (n: string) => path.join(t.dir, "agents", n);
 const lastUser = () => t.model.requests.at(-1)?.users.at(-1);
@@ -57,7 +54,7 @@ test("-h and help print the usage; --version prints versions; no command shows t
 	}
 	const none = await t.cli();
 	assert.equal(none.code, 0, none.stderr);
-	assert.match(none.stdout, /Talk to it: +pp chat|Start here: +pp setup|Start it: +pp start/);
+	assert.match(none.stdout, /Open it: +pp attach|Start here: +pp setup|Start it: +pp start/);
 	const v = await t.cli("--version");
 	assert.equal(v.code, 0, v.stderr);
 	assert.match(v.stdout, /\d+\.\d+\.\d+/);

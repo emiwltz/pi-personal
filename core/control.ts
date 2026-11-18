@@ -86,7 +86,7 @@ export function up(name: string): UpResult {
 		return r;
 	}
 	const ended = cleanFinished(agent);
-	const enabled = channels(agent, ROOT).map((c) => c.name);
+	const enabled = channels(agent).map((c) => c.name);
 	for (const ch of [undefined, ...enabled]) {
 		if (find(agent, ch)) {
 			r.running.push(ch ?? "agent");
@@ -158,7 +158,7 @@ export async function start(name: string, waitMs = 30_000): Promise<UpResult & {
 	const agent = load(name);
 	// Stopped on purpose before: tell the bridge once, at its next start, so work that was open is closed, not resumed
 	// (pi may have been down when the stop came, after a crash or while waiting to retry).
-	if (fs.existsSync(agent.paths.stopped)) fs.renameSync(agent.paths.stopped, path.join(agent.paths.dir, "was-stopped"));
+	if (fs.existsSync(agent.paths.stopped)) fs.renameSync(agent.paths.stopped, agent.paths.wasStopped);
 	let pos = port.end(agent.paths.port);
 	const r = up(name);
 	if (!r.started.includes("agent")) return { ...r, ready: undefined };
@@ -203,8 +203,8 @@ export async function stop(name: string): Promise<string[]> {
 		fact(agent, ch ? { type: "stopped", channel: ch } : { type: "stopped" });
 		ended.push(ch ?? "agent");
 	}
-	for (const until = Date.now() + 15_000; Date.now() < until && mine.some((t) => herdr.get(t.address)?.state === "live"); )
-		await new Promise((r) => setTimeout(r, 200));
+	const until = Date.now() + 15_000;
+	while (Date.now() < until && mine.some((t) => herdr.get(t.address)?.state === "live")) await new Promise((r) => setTimeout(r, 200));
 	for (const t of mine) herdr.rm(t.address);
 	if (ended.length) note(agent, `stopped ${ended.join(", ")} (it stays stopped until started again)`);
 	return ended;
@@ -258,7 +258,6 @@ export interface AgentStatus extends ProgramStatus {
 	channels: (ProgramStatus & { name: string })[];
 }
 
-
 export function status(name: string): AgentStatus {
 	const agent = loadRecord(name);
 	let settings: Settings | undefined;
@@ -297,7 +296,7 @@ export function status(name: string): AgentStatus {
 	const kept = readKeeper(agent);
 	let lastError: ProgramStatus["lastError"];
 	try {
-		lastError = JSON.parse(fs.readFileSync(path.join(agent.paths.dir, "last-error.json"), "utf8")); // written by the bridge
+		lastError = JSON.parse(fs.readFileSync(agent.paths.lastError, "utf8")); // written by the bridge
 	} catch {}
 	return {
 		name,
@@ -310,6 +309,6 @@ export function status(name: string): AgentStatus {
 		pending: port.pending(agent.paths.port).length,
 		...(settingsError ? { settingsError } : {}),
 		...(settings?.problems ? { problems: settings.problems } : {}),
-		channels: settings ? channels({ settings }, ROOT).map((c) => ({ name: c.name, ...program(c.name) })) : [],
+		channels: settings ? channels({ settings }).map((c) => ({ name: c.name, ...program(c.name) })) : [],
 	};
 }

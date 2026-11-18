@@ -6,25 +6,15 @@ import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as port from "../core/port.ts";
-import { type Env, ROOT, setup, sleep } from "./helpers.ts";
+import { changeSettings, type Env, lastStart, ROOT, setup, sleep } from "./helpers.ts";
 
 let t: Env;
 const folder = () => path.join(t.dir, "agents", "main");
 const P = () => t.portOf("main");
 const chState = () => path.join(t.home, "agents", "main", "channels", "fake");
-const settings = (patch: Record<string, unknown>) => {
-	// "extensions": the folders under extensions/ to turn on, by putting them where pi finds them (.pi/extensions/).
-	const { extensions, ...rest } = patch as { extensions?: string[] };
-	if (extensions) {
-		const dir = path.join(folder(), ".pi", "extensions");
-		fs.rmSync(dir, { recursive: true, force: true });
-		for (const n of extensions) fs.cpSync(path.join(folder(), "extensions", n), path.join(dir, n), { recursive: true });
-	}
-	const file = path.join(folder(), "pi-personal.json");
-	if (Object.keys(rest).length) fs.writeFileSync(file, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, "utf8")), ...rest }, null, 2));
-};
+const settings = (patch: Record<string, unknown>) => changeSettings(folder(), patch);
 const status = async () => JSON.parse((await t.cli("status", "main", "--json")).stdout);
-const lastStarted = () => [...port.events(P()).events].reverse().find((e) => e.type === "started" && !e.channel)!;
+const lastStarted = () => lastStart(P());
 const viaChannel = async (id: string, text: string) => {
 	fs.writeFileSync(path.join(chState(), "outbox", `${id}.txt`), text);
 };

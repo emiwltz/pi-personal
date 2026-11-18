@@ -12,7 +12,6 @@ let t: Env;
 const P = () => t.portOf("main");
 const ids = (e: port.Seen) => ((e.refs as { id: string }[] | undefined) ?? []).map((r) => r.id);
 const all = () => port.events(P(), 0).events;
-const settledOf = (from: number, id: string, ms = 60_000) => t.waitEvent("main", from, (e) => e.type === "settled" && ids(e).includes(id), ms);
 const piPid = () => Number(all().filter((e) => e.type === "started" && !e.channel).at(-1)?.pid);
 const alive = (pid: number) => {
 	try {

@@ -25,7 +25,6 @@ export interface Terminal {
 	exit_code?: number | null;
 	signal?: number | null;
 	reason?: string | null;
-	turn?: number;
 }
 
 export class HerdrError extends Error {
@@ -117,6 +116,12 @@ export function atLeast(a: string, b: string): boolean {
 
 /** Herdr Core's command on this machine, and its version: the one set for Pi-Personal, the one on the PATH (if it
  * really is Herdr's: some window managers ship another hc), or where Herdr's installer puts it. */
+/** The full path of a command found on PATH (`hc` → /home/me/.local/bin/hc); a path is returned as it is. */
+export function fullPath(bin: string): string {
+	if (bin.includes("/")) return bin;
+	return spawnSync("sh", ["-c", `command -v ${bin}`], { encoding: "utf8" }).stdout.trim() || bin;
+}
+
 export function find(): { bin: string; version: string } | undefined {
 	const local = path.join(os.homedir(), ".local", "bin");
 	const tries = [process.env[`${ENV}_HC`], "hc", path.join(local, "hc"), path.join(local, "herdr-core"), "herdr-core"].filter(Boolean) as string[];

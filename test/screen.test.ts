@@ -1,5 +1,5 @@
 // How Pi-Personal looks: the colour depth and the motion it allows itself, the four levels of text, the mark, the
-// opening, the bar. Every drawing is a function that returns text, so everything here is checked as text; no terminal,
+// opening, the signs. Every drawing is a function that returns text, so everything here is checked as text; no terminal,
 // no agent, no Herdr Core.
 import assert from "node:assert/strict";
 import * as fs from "node:fs";
@@ -172,11 +172,7 @@ test("the mark is the square « Pp »: the capital and the small p, side by side
 	assert.equal((screen.mark(colour())[0].match(/\x1b\[48;/g) ?? []).length, 4, "in the top row, only the P's bowl sides are lit below as well");
 });
 
-test("the bar is as wide as asked, empty at 0 and full at 1", () => {
-	const l = colour();
-	for (const k of [0, 0.3, 0.999, 1]) assert.equal(screen.width(screen.bar(l, k, 24)), 24);
-	assert.doesNotMatch(screen.bar(l, 1, 10), /─|╸/);
-	assert.doesNotMatch(screen.bar(l, 0, 10), /━/);
+test("out of a terminal, the star is a plain character", () => {
 	assert.doesNotMatch(screen.star(screen.look({}, { isTTY: false })), codes);
 });
 

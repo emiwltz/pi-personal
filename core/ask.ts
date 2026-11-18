@@ -5,16 +5,15 @@ import * as screen from "./screen.ts";
 import { split } from "./screen.ts";
 
 const tty = () => !!process.stdin.isTTY && !!process.stdout.isTTY;
-/** The words keep their old names; the colours are the palette's (screen.ts): the first colour says "this concerns you",
- * the second "alive, done". Without a terminal, plain text. */
+/** The levels of text of the palette (screen.ts): bright, secondary, and the meanings: "this concerns you", "alive, done",
+ * "broken". Without a terminal, plain text. */
 const level = (draw: (l: screen.Look, s: string) => string) => (s: string) => (tty() ? draw(screen.look(), s) : s);
 export const style = {
-	bold: level((l, s) => screen.bright(l, s, true)),
-	dim: level(screen.second),
-	green: level(screen.alive),
-	yellow: level((l, s) => screen.yours(l, s)),
-	red: level(screen.broken),
-	cyan: level((l, s) => screen.yours(l, s)),
+	bright: level((l, s) => screen.bright(l, s, true)),
+	second: level(screen.second),
+	alive: level(screen.alive),
+	yours: level((l, s) => screen.yours(l, s)),
+	broken: level(screen.broken),
 };
 
 /** What every line starts with while a step of the guide runs: its line in the margin (see `margin`). */
@@ -27,11 +26,10 @@ export const marginNow = () => left;
 export const say = (s = "") => process.stdout.write(`${left}${s}\n`);
 /** The end of a line a question has started (its answer): no margin again. */
 const tail = (s: string) => process.stdout.write(`${s}\n`);
-export const ok = (s: string) => say(`  ${style.green("✔")} ${s}`);
-export const warn = (s: string) => say(`  ${style.yellow("!")} ${s}`);
-export const fail = (s: string) => say(`  ${style.red("✘")} ${s}`);
-export const step = (s: string) => say(`\n${style.bold(s)}`);
-export const hint = (s: string) => say(`    ${style.dim(s)}`);
+export const ok = (s: string) => say(`  ${style.alive("✔")} ${s}`);
+export const warn = (s: string) => say(`  ${style.yours("!")} ${s}`);
+export const fail = (s: string) => say(`  ${style.broken("✘")} ${s}`);
+export const hint = (s: string) => say(`    ${style.second(s)}`);
 
 /** Lines read from a non-TTY standard input, one per question (tests and scripted setups answer this way). */
 let piped: string[] | undefined;
@@ -82,7 +80,7 @@ function keys(onKey: (key: string) => boolean | undefined): Promise<void> {
 	});
 }
 
-const question = (q: string, extra = "") => `${left}  ${style.cyan("?")} ${style.bold(q)}${extra ? ` ${style.dim(extra)}` : ""}`;
+const question = (q: string, extra = "") => `${left}  ${style.yours("?")} ${style.bright(q)}${extra ? ` ${style.second(extra)}` : ""}`;
 
 export interface Option<T> {
 	label: string;
@@ -117,7 +115,7 @@ export async function choose<T>(q: string, options: Option<T>[], initial = 0): P
 			readline.clearScreenDown(process.stdout);
 		}
 		const lines: string[] = [];
-		if (long) lines.push(`${left}    ${style.dim("type to search:")} ${query}${style.dim("▏")}`);
+		if (long) lines.push(`${left}    ${style.second("type to search:")} ${query}${style.second("▏")}`);
 		if (i < top) top = i;
 		if (i >= top + ROWS) top = i - ROWS + 1;
 		const rows = long ? shown.slice(top, top + ROWS) : shown;
@@ -128,10 +126,10 @@ export async function choose<T>(q: string, options: Option<T>[], initial = 0): P
 			const label = o.label.length > width - 6 ? `${o.label.slice(0, width - 7)}…` : o.label;
 			const room = width - 6 - label.length - 2;
 			const note = o.note && room > 3 ? (o.note.length > room ? `${o.note.slice(0, room - 1)}…` : o.note) : "";
-			lines.push(`${left}    ${at ? style.cyan("›") : " "} ${at ? style.bold(label) : label}${note ? `  ${style.dim(note)}` : ""}`);
+			lines.push(`${left}    ${at ? style.yours("›") : " "} ${at ? style.bright(label) : label}${note ? `  ${style.second(note)}` : ""}`);
 		});
-		if (!shown.length) lines.push(`${left}    ${style.dim("nothing matches")}`);
-		if (long && shown.length > ROWS) lines.push(`${left}    ${style.dim(`(${i + 1}/${shown.length})`)}`);
+		if (!shown.length) lines.push(`${left}    ${style.second("nothing matches")}`);
+		if (long && shown.length > ROWS) lines.push(`${left}    ${style.second(`(${i + 1}/${shown.length})`)}`);
 		process.stdout.write(`${lines.join("\n")}\n`);
 		drawn = lines.length;
 	};
@@ -156,7 +154,7 @@ export async function choose<T>(q: string, options: Option<T>[], initial = 0): P
 	});
 	readline.moveCursor(process.stdout, 0, -drawn);
 	readline.clearScreenDown(process.stdout);
-	say(`    ${style.green(shown[i].label)}`);
+	say(`    ${style.alive(shown[i].label)}`);
 	return shown[i].value;
 }
 
@@ -185,7 +183,7 @@ export async function confirm(q: string, yes = true): Promise<boolean> {
 	});
 	const result = answer ?? yes;
 	if (answer !== undefined) process.stdout.write("\b \b");
-	tail(style.green(result ? "yes" : "no"));
+	tail(style.alive(result ? "yes" : "no"));
 	return result;
 }
 
@@ -219,7 +217,7 @@ export async function secret(q: string): Promise<string> {
 		if (k === "\u007f" || k === "\b") value = value.slice(0, -1);
 		else if (k.length === 1 && k >= " ") value += k;
 	});
-	tail(value ? style.green("received") : style.dim("nothing"));
+	tail(value ? style.alive("received") : style.second("nothing"));
 	return value.trim();
 }
 

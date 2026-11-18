@@ -4,7 +4,7 @@ A Pi-Personal channel: it connects one agent to a Telegram bot, by long polling 
 
 ## Set it up
 
-`pp setup` offers it, at its last step, and guides you: create a bot with @BotFather, paste its token, write to the bot from your own Telegram account, say yes to let yourself in. The agent then answers that first message. The same, on its own: `pp channel telegram setup`, then `pp channel add telegram`.
+`pp setup` offers it (step 4, "Reach it") and guides you: create a bot with @BotFather, paste its token (checked with Telegram before it is kept), write to the bot from your own Telegram account within 10 minutes, and say yes to let yourself in. That yes also makes you the agent's owner on Telegram: your messages reach it as "From: the owner, …", which no one else can write (`pp channel telegram owner` shows or changes it). The agent then answers that first message. The same, on its own: `pp channel telegram setup`, then `pp channel add telegram`.
 
 ## By hand, in 5 steps
 
@@ -57,6 +57,6 @@ What the Telegram channel does not do: groups (it answers private chats only), b
 - **Quoting.** The first piece of a reply quotes the Telegram message it answers (taken from `from.message`, which the channel put there when it sent the message in).
 - **Splitting.** Replies longer than 4,096 characters, counted in UTF-16 units as Telegram counts, are cut at a paragraph, then a line, then a sentence, then a space, never inside a character.
 - **Rate limits.** About one message per second per chat and a small gap between any two sends. When Telegram answers 429, it waits the `retry_after` it was given. Network and server errors are retried with backoff up to 60 seconds. Another refusal from Telegram (for example a blocked chat) skips that reply and logs it.
-- **Its own commands.** `setup`, `who`, `allow <id>`, `deny <id>` and `check`, run through `pp channel [agent] telegram ...`. `pp doctor` runs its `check`, which prints one line per check, starting with `ok`, `note` or `FAIL`.
+- **Its own commands.** `setup`, `who`, `allow <id>`, `deny <id>`, `owner [<id>]` and `check`, run through `pp channel [agent] telegram ...`. `pp doctor` runs its `check`, which prints one line per check, starting with `ok`, `note` or `FAIL`.
 - **Fatal errors.** No token: exit 2. Token refused (401): exit 3.
 - **`apiBase`.** An optional setting to use another Bot API server; the tests point it at a fake Telegram.

@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 300" width="880" height="300" role="img" aria-labelledby="t d">
+  <title id="t">How Pi-Personal works</title>
+  <desc id="d">Telegram, your terminal or a script write a message as a file into the port, a folder of plain files. Your agent, pi in a Herdr Core terminal, takes one message at a time and writes every reply as a line in the port's events file, which the channels read.</desc>
+  <style>
+    .ink { fill: #1c1a3b } .mute { fill: #5d5a80 } .box { fill: #f6f5fc; stroke: #d3d0e6 } .wire { stroke: #8b88b0 } .head { fill: #8b88b0 }
+    .a { fill: #a85800 } .b { fill: #0b7d72 } .core { fill: #fffaf2; stroke: #e7c9a0 } .port { fill: #f1fbf9; stroke: #a9dcd5 }
+    @media (prefers-color-scheme: dark) {
+      .ink { fill: #eceafb } .mute { fill: #928eba } .box { fill: #1d1a38; stroke: #3e3a68 } .wire { stroke: #6f6b9a } .head { fill: #6f6b9a }
+      .a { fill: #ffb548 } .b { fill: #5ed8c8 } .core { fill: #241d24; stroke: #6b5530 } .port { fill: #152a2c; stroke: #2f6b64 }
+    }
+    text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="head"/></marker>
+  </defs>
+
+  <!-- 1. Where you write -->
+  <text x="20" y="30" class="mute" font-size="13" font-weight="600" letter-spacing="1">WHERE YOU WRITE</text>
+  <rect x="20" y="48" width="210" height="58" rx="10" class="box"/>
+  <text x="40" y="74" class="ink" font-size="16" font-weight="600">Telegram</text>
+  <text x="40" y="94" class="mute" font-size="13">or any channel you add</text>
+  <rect x="20" y="120" width="210" height="58" rx="10" class="box"/>
+  <text x="40" y="146" class="ink" font-size="16" font-weight="600">Your terminal</text>
+  <text x="40" y="166" class="mute mono" font-size="13">pp · pp chat</text>
+  <rect x="20" y="192" width="210" height="58" rx="10" class="box"/>
+  <text x="40" y="218" class="ink" font-size="16" font-weight="600">A script</text>
+  <text x="40" y="238" class="mute mono" font-size="13">pp send</text>
+
+  <!-- 2. The port -->
+  <text x="330" y="30" class="mute" font-size="13" font-weight="600" letter-spacing="1">THE PORT</text>
+  <rect x="330" y="48" width="220" height="202" rx="12" class="port"/>
+  <text x="350" y="80" class="ink" font-size="16" font-weight="600">A folder of plain files</text>
+  <text x="350" y="118" class="b mono" font-size="14">inbox/</text>
+  <text x="350" y="138" class="mute" font-size="13">a message is a file</text>
+  <text x="350" y="182" class="b mono" font-size="14">events.jsonl</text>
+  <text x="350" y="202" class="mute" font-size="13">every reply is a line</text>
+  <text x="350" y="234" class="mute" font-size="12">open it with cat and ls</text>
+
+  <!-- 3. Your agent -->
+  <text x="650" y="30" class="mute" font-size="13" font-weight="600" letter-spacing="1">YOUR AGENT</text>
+  <rect x="650" y="48" width="210" height="202" rx="12" class="core"/>
+  <text x="670" y="80" class="ink" font-size="16" font-weight="600"><tspan class="b">✦</tspan> pi</text>
+  <text x="670" y="100" class="mute" font-size="13">the agent, with all it can do</text>
+  <text x="670" y="140" class="ink" font-size="16" font-weight="600">in Herdr Core</text>
+  <text x="670" y="160" class="mute" font-size="13">a terminal that stays alive,</text>
+  <text x="670" y="178" class="mute" font-size="13">that you can watch and take</text>
+  <text x="670" y="196" class="mute" font-size="13">over at any time</text>
+  <text x="670" y="234" class="a" font-size="12" font-weight="600">brought back if it stops</text>
+
+  <!-- the wires: in at the top, out at the bottom -->
+  <path d="M232 112 C 280 112, 282 122, 328 122" class="wire" fill="none" stroke-width="2" marker-end="url(#arrow)"/>
+  <path d="M552 122 L 648 122" class="wire" fill="none" stroke-width="2" marker-end="url(#arrow)"/>
+  <path d="M648 186 L 552 186" class="wire" fill="none" stroke-width="2" marker-end="url(#arrow)"/>
+  <path d="M328 186 C 282 186, 280 196, 232 196" class="wire" fill="none" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="600" y="112" class="mute" font-size="12" text-anchor="middle">one at a time</text>
+  <text x="600" y="206" class="mute" font-size="12" text-anchor="middle">replies</text>
+  <text x="280" y="290" class="mute" font-size="13">A channel is any small program, in any language, that writes files and reads lines.</text>
+</svg>

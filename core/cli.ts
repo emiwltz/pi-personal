@@ -9,7 +9,7 @@ import * as agents from "./agents.ts";
 import * as control from "./control.ts";
 import * as herdr from "./herdr.ts";
 import { COMMAND, ENV, PRODUCT, SLUG } from "./name.ts";
-import { defaultFolderParent, home, piDir, privateDir, ROOT } from "./paths.ts";
+import { defaultFolderParent, home, piDir, privateDir, ROOT, tilde } from "./paths.ts";
 import * as port from "./port.ts";
 import { channelProgram, checkExtension, checkModel, dryStart, extensionPath, extensionsDir, foundExtensions, lockFile, lockHolder, piCli, piPackage, runForever } from "./runner.ts";
 
@@ -25,7 +25,7 @@ Usage: ${COMMAND} [command] [agent] [options]          with one agent, its name 
   ${COMMAND} status          what it and its channels are doing, and why
   ${COMMAND} doctor          check the installation and every agent, by topic
   ${COMMAND} update          the newest ${PRODUCT}, with the pi it was tested with
-  ${COMMAND} help --all      every command: chat, send, start, stop, channels, extensions, scripts
+  ${COMMAND} help --all      every command: send, start, stop, channels, extensions, scripts
 
 Its instructions: AGENTS.md in its folder (~/pi-personal/<name>). Guide: https://github.com/emiwltz/pi-personal`;
 
@@ -128,7 +128,6 @@ function agentAnd(words: string[]): [string, string[]] {
 	if (words.length && agents.list().includes(words[0])) return [words[0], words.slice(1)];
 	return [agentName(undefined), words];
 }
-const tilde = (p: string) => (process.env.HOME && p.startsWith(`${process.env.HOME}/`) ? `~${p.slice(process.env.HOME.length)}` : p);
 
 type Row = control.AgentStatus | { name: string; error: string };
 /** One agent's status; a broken agent shows its error instead of breaking the list. */
@@ -345,19 +344,28 @@ async function startCmd(name: string, json: boolean, restart = false): Promise<n
 	}
 	// Started in the background: say how to reach it, the one thing a person wants next.
 	if (r.ready !== false && (r.started.includes("agent") || r.running.includes("agent"))) {
-		const who = agents.list().length > 1 ? ` ${name}` : "";
-		lines.push(`  open it: ${COMMAND}    talk to it here: ${COMMAND} chat${who}`);
+		lines.push(`  open it: ${COMMAND}, then Enter (ctrl+\\ comes back)`);
 	}
 	out(json, r, () => lines.join("\n"));
 	return r.ready === false ? 1 : 0;
+}
+
+/** Everything after a command word, for a program that reads it (pi): without our own --home. */
+const after = (argv: string[], word: string) =>
+	argv.slice(argv.indexOf(word) + 1).filter((x, i, all) => x !== "--home" && all[i - 1] !== "--home" && !x.startsWith("--home="));
+
+/** The installer's mark (.installed): only an installed copy updates itself; a source folder is updated with git. */
+function installedCopy(): string {
+	const marker = path.join(ROOT, ".installed");
+	if (!fs.existsSync(marker)) throw new UsageError(`this ${PRODUCT} runs from a source folder (${ROOT}), not an installed copy: update it with git pull, then ./install.sh`);
+	return marker;
 }
 
 /** `update`: the newest Pi-Personal from GitHub, through its own installer (downloaded whole before it runs), then
  * the agents that were running are restarted by the new command, with the Node.js it now uses (their conversations
  * continue), and the login service is rewritten to match. PI_PERSONAL_SOURCE (a folder) installs that copy instead. */
 async function update(json: boolean): Promise<number> {
-	const marker = path.join(ROOT, ".installed");
-	if (!fs.existsSync(marker)) throw new UsageError(`this ${PRODUCT} runs from a source folder (${ROOT}), not an installed copy: update it with git pull, then ./install.sh`);
+	const marker = installedCopy();
 	const command = fs.readFileSync(marker, "utf8").split("\n")[0].trim();
 	const repo = /github\.com\/([^/]+\/[^/.]+)/.exec(JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).repository?.url ?? "")?.[1] ?? "emiwltz/pi-personal";
 	const source = process.env[`${ENV}_SOURCE`];
@@ -436,7 +444,6 @@ async function stopAll(json: boolean): Promise<number> {
 	return trouble ? 1 : 0;
 }
 
-const editSettings = (agent: agents.AgentRecord, change: (s: agents.Settings) => void) => agents.editSettings(agent.folder, change);
 
 async function main(argv: string[]): Promise<number> {
 	const { pos, opt, rest } = parse(argv);
@@ -487,7 +494,7 @@ async function main(argv: string[]): Promise<number> {
 					`  its instructions: ${tilde(path.join(agent.folder, "AGENTS.md"))}`,
 					`  sign in once:     ${COMMAND} login ${model.split("/")[0]}`,
 					`  start it:         ${COMMAND} start ${name}`,
-					`  talk to it:       ${COMMAND} chat ${name}`,
+					`  open it:          ${COMMAND}, then Enter`,
 				].join("\n"),
 			);
 			return 0;
@@ -600,7 +607,7 @@ async function main(argv: string[]): Promise<number> {
 		}
 		case "login": {
 			// Alone: pi's own screen, for /login. With a provider: pi's command-line sign-in, given everything after "login".
-			const args = argv.slice(argv.indexOf("login") + 1).filter((x, i, all) => x !== "--home" && all[i - 1] !== "--home" && !x.startsWith("--home="));
+			const args = after(argv, "login");
 			const providers = await import("./providers.ts");
 			if (!args.length) {
 				if (!process.stdin.isTTY) throw new UsageError(`usage: ${COMMAND} login (opens pi: /login there), or ${COMMAND} login <provider> [--api-key] [--no-browser]. ${PROVIDERS()}`);
@@ -611,7 +618,7 @@ async function main(argv: string[]): Promise<number> {
 		}
 		case "pi": {
 			// Pi-Personal's pinned pi, with the settings folder all agents share (packages, MCP servers, models, sign-ins).
-			const args = argv.slice(argv.indexOf("pi") + 1).filter((x, i, all) => x !== "--home" && all[i - 1] !== "--home" && !x.startsWith("--home="));
+			const args = after(argv, "pi");
 			agents.preparePi();
 			return spawnSync(process.execPath, [piCli(), ...args], { stdio: "inherit", env: { ...process.env, PI_CODING_AGENT_DIR: piDir() } }).status ?? 1;
 		}
@@ -650,13 +657,9 @@ async function main(argv: string[]): Promise<number> {
 				if (a === "add") {
 					if (!rest?.length && !agents.shipped(ch))
 						throw new UsageError(`"${ch}" does not ship with ${PRODUCT}: give its command after --, for example: ${COMMAND} channel add ${agent.name} ${ch} -- python3 /path/to/${ch}.py`);
-					editSettings(agent, (s) => {
-						const prev = s.channels?.[ch];
-						const own = typeof prev === "object" && prev !== null && !Array.isArray(prev) ? prev : {}; // its own settings stay
-						s.channels = { ...(s.channels ?? {}), [ch]: { ...own, enabled: true, ...(rest?.length ? { command: rest } : {}) } };
-					});
+					agents.turnOn(agent.folder, ch, rest);
 				} else
-					editSettings(agent, (s) => {
+					agents.editSettings(agent.folder, (s) => {
 						if (s.channels) delete s.channels[ch];
 					});
 				// A running agent picks the change up at once: up starts the new channel, or stops the removed one.
@@ -673,8 +676,8 @@ async function main(argv: string[]): Promise<number> {
 			const agent = agents.load(name);
 			const ch = need(words[0], "channel name");
 			// A shipped channel's commands work before it is turned on (its setup comes first).
-			const on = agents.channels(agent, ROOT).some((c) => c.name === ch);
-			const p = channelProgram(on || !agents.shipped(ch) ? agent : { ...agent, settings: { ...agent.settings, channels: { ...(agent.settings.channels ?? {}), [ch]: { enabled: true } } } }, ch);
+			const on = agents.channels(agent).some((c) => c.name === ch);
+			const p = channelProgram(on || !agents.shipped(ch) ? agent : agents.withChannel(agent, ch), ch);
 			return spawnSync(p.command, [...p.args, ...words.slice(1), ...(rest ?? [])], { stdio: "inherit", cwd: p.cwd, env: p.env }).status ?? 1;
 		}
 		case "ext": {
@@ -708,16 +711,19 @@ async function main(argv: string[]): Promise<number> {
 			const { setup } = await import("./welcome.ts");
 			return setup(VERSION);
 		}
-		case "update":
-			if (fromInside(agents.list()) && !fs.existsSync(path.join(ROOT, ".installed"))) throw new UsageError(`this ${PRODUCT} runs from a source folder (${ROOT}), not an installed copy: update it with git pull, then ./install.sh`);
+		case "update": {
+			// Run by an agent on itself: checked here, then handed to a terminal of its own (the update restarts it).
+			const self = agents.list().find((n) => fromInside([n]));
+			if (self) installedCopy();
 			if (opt["when-idle"]) await whenIdle(agents.list());
-			if (fromInside(agents.list())) return detached("The update runs in a moment, outside this terminal; the agents restart after it, this one included.", agents.loadRecord(agents.list().find((n) => fromInside([n])) as string).paths.log);
+			if (self) return detached("The update runs in a moment, outside this terminal; the agents restart after it, this one included.", agents.loadRecord(self).paths.log);
 			return update(json);
+		}
 		case "doctor":
 		case "service":
 		case "uninstall": {
-			const { setup } = await import("./setup.ts");
-			return setup(cmd, pos.slice(1), opt);
+			const { maintain } = await import("./setup.ts");
+			return maintain(cmd, pos.slice(1), opt);
 		}
 		default:
 			throw new UsageError(`unknown command "${cmd}". "${COMMAND} help" lists them.`);

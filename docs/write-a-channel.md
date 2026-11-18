@@ -72,7 +72,7 @@ Turn the channel on with `pp channel add <agent> <name> -- <command...>`, or dec
 
 A running agent starts it at once (`channel add` runs `pp up`); otherwise `pp start <agent>` starts it, in its own Herdr Core terminal, `pi-personal-<agent>_mail`. To turn it off, set `"enabled": false` (its settings stay), or `pp channel remove <agent> mail` (its settings go too); either way its terminal is stopped.
 
-Use absolute paths in `command`. The program gets the `PATH` of whoever started the agent (your shell, or the login service, which records your `PATH` when you install it), and its working directory is its state folder.
+Use absolute paths in `command`. The program gets the environment of the runner: Herdr Core's, with the `PATH` of whoever started the agent (your shell, or the login service, which records your `PATH` when you install it), plus the variables below. Its working directory is its state folder.
 
 It receives these environment variables:
 
@@ -122,10 +122,10 @@ The port guarantees exactly-once from the inbox on. The channel is responsible f
 
 Your channel is supervised like an agent:
 
-- when it exits, for any reason, it is started again: after 0.5, 1, 2, 4, 8 seconds;
+- when it exits, for any reason, it is started again: at once if it had run for more than a minute, else after 0.5, 1, 2, 4, 8 seconds;
 - after 5 failed starts within 10 minutes it is marked `failed` (`pp status` shows the reason), then tried once an hour; staying up 10 minutes resets the count;
 - a crashing channel never affects the agent or the other channels;
-- on stop it gets SIGTERM (or SIGHUP when its terminal closes) and has 5 seconds.
+- on stop it gets SIGTERM (or SIGHUP when its terminal closes); the runner leaves 5 seconds later, and the terminal is then removed with what still runs in it.
 
 So: assume you can be killed at any moment, which the rules above make safe. For a configuration error (a missing token), print one clear line to standard error and exit with a non-zero code; the keeper gives up after 5 tries and `pp status` says so. Your standard output and error go to your Herdr Core terminal (its address is in `pp status <agent>`; read it with `hc read <address>`); the keeper's own start and exit lines go to `pp log <agent>`. After fixing the problem, `pp restart <agent>` starts everything again (the agent's conversation continues).
 
