@@ -1,13 +1,32 @@
 // Questions in the terminal, for `pp setup`: a choice in a list, yes or no, a line of text, a secret. No dependency:
 // raw keys on a TTY, plain lines otherwise (a pipe, a test), and colours only where they help (NO_COLOR turns them off).
 import * as readline from "node:readline";
+import * as screen from "./screen.ts";
+import { split } from "./screen.ts";
 
 const tty = () => !!process.stdin.isTTY && !!process.stdout.isTTY;
-const colour = () => tty() && !process.env.NO_COLOR && process.env.TERM !== "dumb";
-const paint = (code: string) => (s: string) => (colour() ? `\x1b[${code}m${s}\x1b[0m` : s);
-export const style = { bold: paint("1"), dim: paint("2"), green: paint("32"), yellow: paint("33"), red: paint("31"), cyan: paint("36") };
+/** The words keep their old names; the colours are the palette's (screen.ts): the first colour says "this concerns you",
+ * the second "alive, done". Without a terminal, plain text. */
+const level = (draw: (l: screen.Look, s: string) => string) => (s: string) => (tty() ? draw(screen.look(), s) : s);
+export const style = {
+	bold: level((l, s) => screen.bright(l, s, true)),
+	dim: level(screen.second),
+	green: level(screen.alive),
+	yellow: level((l, s) => screen.yours(l, s)),
+	red: level(screen.broken),
+	cyan: level((l, s) => screen.yours(l, s)),
+};
 
-export const say = (s = "") => process.stdout.write(`${s}\n`);
+/** What every line starts with while a step of the guide runs: its line in the margin (see `margin`). */
+let left = "";
+/** Draw `prefix` (the guide's line in the margin) at the start of every line written here, until `margin("")`. */
+export function margin(prefix: string): void {
+	left = prefix;
+}
+export const marginNow = () => left;
+export const say = (s = "") => process.stdout.write(`${left}${s}\n`);
+/** The end of a line a question has started (its answer): no margin again. */
+const tail = (s: string) => process.stdout.write(`${s}\n`);
 export const ok = (s: string) => say(`  ${style.green("✔")} ${s}`);
 export const warn = (s: string) => say(`  ${style.yellow("!")} ${s}`);
 export const fail = (s: string) => say(`  ${style.red("✘")} ${s}`);
@@ -38,10 +57,9 @@ function keys(onKey: (key: string) => boolean | undefined): Promise<void> {
 		let pasting = false;
 		let held = ""; // an escape sequence cut off at the end of a read: it comes whole with the next one
 		const onData = (buf: Buffer) => {
-			let chunk = held + buf.toString("utf8");
-			held = /\x1b(\[[0-9;]*)?$/.exec(chunk)?.[0] ?? "";
-			chunk = chunk.slice(0, chunk.length - held.length);
-			for (const k of chunk.match(/\x1b\[[0-9;]*[A-Za-z~]|\x1bO[A-Za-z]|[\s\S]/gu) ?? []) {
+			const read = split(held + buf.toString("utf8"));
+			held = read.held;
+			for (const k of read.keys) {
 				if (k === "\x1b[200~" || k === "\x1b[201~") {
 					pasting = k === "\x1b[200~";
 					continue;
@@ -64,7 +82,7 @@ function keys(onKey: (key: string) => boolean | undefined): Promise<void> {
 	});
 }
 
-const question = (q: string, extra = "") => `  ${style.cyan("?")} ${style.bold(q)}${extra ? ` ${style.dim(extra)}` : ""}`;
+const question = (q: string, extra = "") => `${left}  ${style.cyan("?")} ${style.bold(q)}${extra ? ` ${style.dim(extra)}` : ""}`;
 
 export interface Option<T> {
 	label: string;
@@ -77,7 +95,7 @@ export interface Option<T> {
 export async function choose<T>(q: string, options: Option<T>[], initial = 0): Promise<T> {
 	if (!options.length) throw new Error(`nothing to choose for: ${q}`);
 	if (!tty()) {
-		say(question(q));
+		tail(question(q));
 		options.forEach((o, i) => say(`    ${i + 1}. ${o.label}${o.note ? `  ${o.note}` : ""}`));
 		const a = (await pipedLine()).trim();
 		const n = Number(a);
@@ -99,25 +117,25 @@ export async function choose<T>(q: string, options: Option<T>[], initial = 0): P
 			readline.clearScreenDown(process.stdout);
 		}
 		const lines: string[] = [];
-		if (long) lines.push(`    ${style.dim("type to search:")} ${query}${style.dim("▏")}`);
+		if (long) lines.push(`${left}    ${style.dim("type to search:")} ${query}${style.dim("▏")}`);
 		if (i < top) top = i;
 		if (i >= top + ROWS) top = i - ROWS + 1;
 		const rows = long ? shown.slice(top, top + ROWS) : shown;
-		const width = Math.max(20, (process.stdout.columns || 80) - 1);
+		const width = Math.max(20, (process.stdout.columns || 80) - 1 - screen.width(left)); // the margin takes room too
 		rows.forEach((o, k) => {
 			const at = (long ? top : 0) + k === i;
 			// One screen line per row (a wrapped row would break the redraw): the label first, the note if it fits.
 			const label = o.label.length > width - 6 ? `${o.label.slice(0, width - 7)}…` : o.label;
 			const room = width - 6 - label.length - 2;
 			const note = o.note && room > 3 ? (o.note.length > room ? `${o.note.slice(0, room - 1)}…` : o.note) : "";
-			lines.push(`    ${at ? style.cyan("›") : " "} ${at ? style.bold(label) : label}${note ? `  ${style.dim(note)}` : ""}`);
+			lines.push(`${left}    ${at ? style.cyan("›") : " "} ${at ? style.bold(label) : label}${note ? `  ${style.dim(note)}` : ""}`);
 		});
-		if (!shown.length) lines.push(`    ${style.dim("nothing matches")}`);
-		if (long && shown.length > ROWS) lines.push(`    ${style.dim(`(${i + 1}/${shown.length})`)}`);
+		if (!shown.length) lines.push(`${left}    ${style.dim("nothing matches")}`);
+		if (long && shown.length > ROWS) lines.push(`${left}    ${style.dim(`(${i + 1}/${shown.length})`)}`);
 		process.stdout.write(`${lines.join("\n")}\n`);
 		drawn = lines.length;
 	};
-	say(question(q, long ? "(type to search, ↑ ↓, Enter)" : "(↑ ↓, Enter)"));
+	tail(question(q, long ? "(type to search, ↑ ↓, Enter)" : "(↑ ↓, Enter)"));
 	draw();
 	await keys((k) => {
 		if ((k === "\r" || k === "\n") && shown.length) return true;
@@ -147,7 +165,7 @@ export async function choose<T>(q: string, options: Option<T>[], initial = 0): P
 export async function confirm(q: string, yes = true): Promise<boolean> {
 	const extra = yes ? "[Y/n]" : "[y/N]";
 	if (!tty()) {
-		say(question(q, extra));
+		tail(question(q, extra));
 		const a = (await pipedLine()).trim().toLowerCase();
 		return a === "" ? yes : /^(y|yes|o|oui)$/.test(a);
 	}
@@ -167,14 +185,14 @@ export async function confirm(q: string, yes = true): Promise<boolean> {
 	});
 	const result = answer ?? yes;
 	if (answer !== undefined) process.stdout.write("\b \b");
-	say(style.green(result ? "yes" : "no"));
+	tail(style.green(result ? "yes" : "no"));
 	return result;
 }
 
 /** A line of text, with a default taken on Enter. */
 export async function text(q: string, initial = ""): Promise<string> {
 	if (!tty()) {
-		say(question(q, initial ? `(${initial})` : ""));
+		tail(question(q, initial ? `(${initial})` : ""));
 		return (await pipedLine()).trim() || initial;
 	}
 	const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
@@ -191,7 +209,7 @@ export async function text(q: string, initial = ""): Promise<string> {
 /** A secret: read without echo on a TTY, never printed. */
 export async function secret(q: string): Promise<string> {
 	if (!tty()) {
-		say(question(q, "(not shown)"));
+		tail(question(q, "(not shown)"));
 		return (await pipedLine()).trim();
 	}
 	process.stdout.write(`${question(q, "(not shown; paste it, then Enter)")} `);
@@ -201,7 +219,7 @@ export async function secret(q: string): Promise<string> {
 		if (k === "\u007f" || k === "\b") value = value.slice(0, -1);
 		else if (k.length === 1 && k >= " ") value += k;
 	});
-	say(value ? style.green("received") : style.dim("nothing"));
+	tail(value ? style.green("received") : style.dim("nothing"));
 	return value.trim();
 }
 

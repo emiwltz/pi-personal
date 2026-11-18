@@ -1,11 +1,11 @@
 #!/usr/bin/env node
-// The Telegram channel: a Pi-personal side program. It talks to Telegram by long polling (no public address needed)
-// and to the agent through the port only (docs/port.md); it imports nothing from Pi-personal's core.
+// The Telegram channel: a Pi-Personal side program. It talks to Telegram by long polling (no public address needed)
+// and to the agent through the port only (docs/port.md); it imports nothing from Pi-Personal's core.
 //
 // Deny by default: it obeys only the Telegram user ids on its guest list (allow.json in its private state
 // folder, outside the agent's working folder). With no list it obeys nobody. Unlisted senders are recorded, never added.
 //
-//   run (started by Pi-personal's keeper):  node telegram.ts
+//   run (started by Pi-Personal's keeper):  node telegram.ts
 //   who wrote and is not listed:        pp channel <agent> telegram who
 //   add someone to the list:            pp channel <agent> telegram allow <user id>
 //   check the token and the list:       pp channel <agent> telegram check   (pp doctor runs it)
@@ -52,6 +52,21 @@ function guests(): string[] | undefined {
 		return undefined;
 	}
 }
+/** The owner: the Telegram user who said "that is me" in the setup, at the terminal. Their messages say so, and only
+ * theirs: the agent changes its settings for its owner only. */
+const ownerFile = () => path.join(STATE, "owner");
+function owner(): string | undefined {
+	try {
+		return fs.readFileSync(ownerFile(), "utf8").trim() || undefined;
+	} catch {
+		return undefined;
+	}
+}
+function setOwner(id: string): void {
+	if (owner()) return; // the first one stays the owner
+	fs.mkdirSync(STATE, { recursive: true, mode: 0o700 });
+	fs.writeFileSync(ownerFile(), `${id}\n`, { mode: 0o600 });
+}
 function writeGuests(ids: string[]): string[] {
 	fs.mkdirSync(STATE, { recursive: true, mode: 0o700 });
 	fs.writeFileSync(`${allowFile()}.tmp`, `${JSON.stringify({ allow: ids }, null, 2)}\n`, { mode: 0o600 });
@@ -80,7 +95,11 @@ function saveState(): void {
 
 // ---- Telegram ---------------------------------------------------------------------------------------------
 
+/** A token that setup is checking with Telegram, before it is stored. */
+let trying: string | undefined;
+
 function token(): string {
+	if (trying) return trying;
 	const file = path.join(SECRETS, "telegram-token");
 	try {
 		return fs.readFileSync(file, "utf8").trim();
@@ -215,7 +234,9 @@ async function handle(u: any, allowed: string[]): Promise<void> {
 			notes.push(`(an attachment could not be saved: ${(err as Error).message})`);
 		}
 	}
-	const body = [m.text ?? m.caption ?? "", ...notes].filter(Boolean).join("\n");
+	// A forwarded message was written by someone else: said so, so that it never reads as the sender's own request.
+	const origin = forwardedFrom(m);
+	const body = [...(origin ? [`(Forwarded: written by ${origin}, not by the sender.)`] : []), m.text ?? m.caption ?? "", ...notes].filter(Boolean).join("\n");
 	if (!body && !attachments.length) return; // stickers, locations...: nothing to pass on
 	const id = `tg-${u.update_id}`;
 	const conversation = `telegram:${m.chat.id}`; // one chat is one conversation: the agent answers it in a run of its own
@@ -230,8 +251,22 @@ async function handle(u: any, allowed: string[]): Promise<void> {
 }
 
 /** Who wrote, for the agent: the name the person gave Telegram, which anyone can choose, and the id, which is theirs. */
-const whoOf = (f: any) =>
-	`${[f.first_name, f.last_name].filter(Boolean).join(" ").replace(/\s+/g, " ").trim() || "someone"} (Telegram user ${f.id}${f.username ? `, @${f.username}` : ""})`.slice(0, 200);
+/** Who wrote a forwarded message, as far as Telegram says: a name in quotes (chosen by them), or "someone". */
+function forwardedFrom(m: any): string | undefined {
+	const o = m.forward_origin;
+	const raw = o ? (o.sender_user ? [o.sender_user.first_name, o.sender_user.last_name].filter(Boolean).join(" ") : (o.sender_user_name ?? o.chat?.title ?? "")) : m.forward_from ? [m.forward_from.first_name, m.forward_from.last_name].filter(Boolean).join(" ") : (m.forward_sender_name ?? m.forward_from_chat?.title);
+	if (raw === undefined && !o) return undefined;
+	const name = String(raw ?? "").replace(/["“”«»()[\]{}\r\n\t]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 64);
+	return name ? `"${name}"` : "someone";
+}
+
+/** Who wrote, for the agent's "From:" line. The name is chosen by whoever writes: it comes in quotes, without quotes,
+ * brackets or line ends of its own, so it can never pass for what this channel writes ("the owner", an id). */
+export const whoOf = (f: any, ownerId = owner()) => {
+	const name = [f.first_name, f.last_name].filter(Boolean).join(" ").replace(/["“”«»()[\]{}\r\n\t]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 64) || "someone";
+	const handle = typeof f.username === "string" && /^\w{1,32}$/.test(f.username) ? `, @${f.username}` : "";
+	return `${String(f.id) === ownerId ? "the owner, " : ""}"${name}" (Telegram user ${f.id}${handle})`;
+};
 
 const extension = (mime?: string) => (mime ? `.${mime.split("/")[1]?.split(";")[0] ?? "bin"}` : "");
 
@@ -457,7 +492,7 @@ const ask = (q: string, hidden = false): Promise<string> =>
 				}
 				if ((k === "\r" || k === "\n") && !pasting && !whole) {
 					done();
-					process.stdout.write(hidden ? (value.trim() ? "received\n" : "\n") : `${value}\n`);
+					process.stdout.write(hidden ? "\n" : `${value}\n`);
 					return resolve(value.trim());
 				}
 				if (k === "\u007f" || k === "\b") value = value.slice(0, -1);
@@ -467,22 +502,41 @@ const ask = (q: string, hidden = false): Promise<string> =>
 					if (!hidden) process.stdout.write(k);
 				}
 			}
+			// A secret is never shown, but its arrival is: a few dots, then how much came. A paste that did not arrive, or
+			// arrived twice, is seen at once.
+			if (hidden) {
+				const n = value.replace(/\s/g, "").length;
+				process.stdout.write(`\r\x1b[K${q}${"•".repeat(Math.min(n, 12))}${n > 12 ? ` ${n} characters` : ""}`);
+			}
 		};
 		stdin.on("data", onData);
 	});
 
 /** The bot token in what was pasted: BotFather's whole message, or the token alone. */
-export const findToken = (text: string): string | undefined => /\b\d{5,}:[A-Za-z0-9_-]{30,}(?![A-Za-z0-9_-])/.exec(text)?.[0];
+export function findToken(text: string): string | undefined {
+	const m = /\b\d{5,}:[A-Za-z0-9_-]{30,}(?![A-Za-z0-9_-])/.exec(text);
+	if (!m) return undefined;
+	// Pasted twice in a row, the number of the second copy runs into the end of the first: the first copy is the token.
+	const [id, rest] = m[0].split(":");
+	const first = rest.endsWith(id) ? `${id}:${rest.slice(0, -id.length)}` : undefined;
+	return first && text.startsWith(`${first}${first}`, m.index) ? first : m[0];
+}
 
 /** `pp setup` runs this before the channel starts: it stores the bot's token and lets the first person in. */
 async function setup(): Promise<void> {
 	const tokenFile = path.join(SECRETS, "telegram-token");
+	const refusal = (err: unknown) => err instanceof TelegramError && (err.code === 401 || err.code === 404);
 	let me: any;
-	if (fs.existsSync(tokenFile)) me = await call("getMe", {}, 15_000).catch(() => undefined);
+	if (fs.existsSync(tokenFile))
+		me = await call("getMe", {}, 15_000).catch((err) => {
+			if (refusal(err)) console.log("  ! Telegram refuses the token stored earlier: it was replaced or revoked. A new one is needed.");
+			return undefined;
+		});
 	if (me) console.log(`  ✔ bot @${me.username} is set up`);
 	while (!me) {
 		console.log("  In Telegram, open a chat with @BotFather and send /newbot. Choose a name; BotFather answers with a token.");
-		const pasted = await ask("  ? Paste the token (not shown, then Enter; empty to skip): ", true);
+		console.log("  For a bot you already have, copy its current token from @BotFather: an older one stops working once a new one is made.");
+		const pasted = await ask("  ? Paste the token, then Enter (empty to skip): ", true);
 		if (!pasted) {
 			console.log("  Skipped: Telegram stays off. Later: pp setup");
 			process.exit(3);
@@ -492,14 +546,21 @@ async function setup(): Promise<void> {
 			console.log("  ✘ That is not a bot token. A token is one line like 123456789:AAH…, in BotFather's message: copy it, or the whole message.");
 			continue;
 		}
+		// Checked with Telegram before it is kept: a token Telegram refuses is never stored.
+		trying = tok;
+		me = await call("getMe", {}, 15_000).catch((err) => {
+			const why = refusal(err)
+				? `Telegram refuses this token (${tok.length} characters, ending in ${tok.slice(-4)}): it is mistyped, or a newer one replaced it`
+				: `Telegram could not be reached (${(err as Error).message})`;
+			console.log(`  ✘ ${why}. Nothing was stored. Try again.`);
+			return undefined;
+		});
+		trying = undefined;
+		if (!me) continue;
 		fs.mkdirSync(SECRETS, { recursive: true, mode: 0o700 });
 		fs.writeFileSync(tokenFile, `${tok}\n`, { mode: 0o600 });
 		fs.chmodSync(tokenFile, 0o600);
-		me = await call("getMe", {}, 15_000).catch((err) => {
-			console.log(`  ✘ Telegram does not accept it (${err instanceof TelegramError && (err.code === 401 || err.code === 404) ? "the token is wrong" : (err as Error).message}). Try again.`);
-			return undefined;
-		});
-		if (me) console.log(`  ✔ bot @${me.username} answers`);
+		console.log(`  ✔ bot @${me.username} answers; its token is stored`);
 	}
 	if (guests()?.length) {
 		console.log(`  ✔ allowed: ${guests()!.join(", ")}`);
@@ -538,9 +599,17 @@ async function setup(): Promise<void> {
 			if (!m?.from || m.from.is_bot || m.chat?.type !== "private" || (m.date ?? 0) < since) continue;
 			const who = [m.from.first_name, m.from.last_name].filter(Boolean).join(" ") || "someone";
 			console.log(`  ✔ ${who}${m.from.username ? ` (@${m.from.username})` : ""}, Telegram user ${m.from.id}, wrote: "${String(m.text ?? "(an attachment)").slice(0, 60)}"`);
-			const yes = (await ask(`  ? Is that you? Let them talk to your agent? [y/N] `)).toLowerCase();
-			if (/^(y|yes|o|oui)$/.test(yes)) {
+			// No default: Enter alone neither lets a stranger in nor refuses the owner.
+			let yes: boolean | undefined;
+			while (yes === undefined) {
+				const a = (await ask("  ? Is that you? Let them talk to your agent? [y/n] ")).toLowerCase();
+				if (/^(y|yes|o|oui)$/.test(a)) yes = true;
+				else if (/^(n|no|non)$/.test(a)) yes = false;
+				else console.log("    Type y or n, then Enter.");
+			}
+			if (yes) {
 				writeGuests([...new Set([...(guests() ?? []), String(m.from.id)])]);
+				setOwner(String(m.from.id)); // said "that is me" at the terminal: the owner (the first one stays)
 				console.log(`  ✔ Telegram user ${m.from.id} is allowed. Others who write are refused until you allow them: pp channel telegram who`);
 				process.off("SIGINT", skip);
 				return;
@@ -570,6 +639,19 @@ async function main(args: string[]): Promise<void> {
 		if (!now) throw new Error(`the guest list ${allowFile()} cannot be read; fix or delete it first`);
 		const ids = writeGuests(cmd === "allow" ? [...new Set([...now, arg])] : now.filter((i) => i !== arg));
 		console.log(`Allowed: ${ids.join(", ") || "nobody"} (it applies at once)`);
+		return;
+	}
+	if (cmd === "owner") {
+		// Typed at the terminal: who the owner is (the person whose messages the agent may take settings changes from).
+		if (!arg) {
+			console.log(`Owner: ${owner() ?? "nobody yet"}${owner() ? "" : `. To set it: pp channel ${env("AGENT")} telegram owner <your numeric Telegram user id> (see: who)`}`);
+			return;
+		}
+		if (!/^\d+$/.test(arg)) throw new Error(`usage: pp channel <agent> telegram owner <numeric Telegram user id>`);
+		if (!guests()?.includes(arg)) throw new Error(`${arg} is not on the guest list: allow it first (pp channel ${env("AGENT")} telegram allow ${arg})`);
+		fs.mkdirSync(STATE, { recursive: true, mode: 0o700 });
+		fs.writeFileSync(ownerFile(), `${arg}\n`, { mode: 0o600 });
+		console.log(`Owner: ${arg} (it applies at once)`);
 		return;
 	}
 	if (cmd === "check") {

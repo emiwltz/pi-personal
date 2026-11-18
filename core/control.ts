@@ -1,9 +1,9 @@
-// Start, stop and inspect agents and their channels in Herdr Core. Pi-personal only ever touches terminals it
+// Start, stop and inspect agents and their channels in Herdr Core. Pi-Personal only ever touches terminals it
 // created: it finds them by the labels it set (the agent, the private area it belongs to, the channel or the
 // agent role), never by guessing.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { type Agent, type AgentRecord, channels, labels, list, load, loadRecord, ownLabels, readSettings, type Settings, terminalName } from "./agents.ts";
+import { type Agent, type AgentRecord, channels, labels, preparePi, list, load, loadRecord, ownLabels, readSettings, type Settings, terminalName } from "./agents.ts";
 import * as herdr from "./herdr.ts";
 import { COMMAND, ENV, SLUG } from "./name.ts";
 import { home, ROOT } from "./paths.ts";
@@ -78,6 +78,7 @@ export interface UpResult {
 /** Make sure what should run is running. Idempotent: it starts what is missing and touches nothing else. */
 export function up(name: string): UpResult {
 	const agent = load(name);
+	preparePi(); // agents made by an older version get what pi's shared settings now hold, at their next start
 	const r: UpResult = { agent: name, started: [], running: [], elsewhere: [], stoppedChannels: [] };
 	const stopped = () => fs.existsSync(agent.paths.stopped);
 	if (stopped()) {

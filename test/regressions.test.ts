@@ -96,7 +96,7 @@ test("send --wait on an id already answered shows that answer at once", async ()
 	assert.ok(Date.now() - t0 < 10_000);
 });
 
-test("a second Pi-personal home on the same Herdr Core never touches the first one's terminals", async () => {
+test("a second Pi-Personal home on the same Herdr Core never touches the first one's terminals", async () => {
 	const other = { ...t.env, PI_PERSONAL_HOME: path.join(t.dir, "home2") };
 	const cli = (...args: string[]) => run(process.execPath, [path.join(ROOT, "core", "cli.ts"), ...args], { env: other }).catch((e) => e);
 	await cli("init", "main", path.join(t.dir, "agents", "main2"), "--model", "fake/echo-1");

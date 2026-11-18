@@ -92,7 +92,7 @@ test("after a restart cut Alice's run and a crash cut Bob's, the resumed reply g
 	const ub = dm(BOB, "tool: sleep 8; echo BOB-PRIVATE-RESULT-42");
 	await until(() => evs("main", from).some((e) => e.type === "taken" && e.id === `tg-${ub}`), 20_000, "Bob's message taken");
 	await sleep(1500);
-	process.kill(piPid(), "SIGKILL"); // a crash while it works for Bob (the pid Pi-personal reported)
+	process.kill(piPid(), "SIGKILL"); // a crash while it works for Bob (the pid Pi-Personal reported)
 	await until(() => evs("main", from).some((e) => e.type === "settled" && has(e, `tg-${ub}`)), 60_000, "Bob's run to settle");
 	const all = evs("main", from);
 	const mixed = all.filter((e) => e.type === "message" && new Set(((e.refs as port.Ref[]) ?? []).map((r) => r.conversation)).size > 1);
@@ -417,7 +417,7 @@ test("a stop while pi is down after a crash: the stopped work is closed at the n
 	port.submit(P(), { id: "down-1", text: "tool: sleep 20; echo never", conversation: "cli", from: { channel: "cli" } });
 	await until(() => evs("main", from).some((e) => e.type === "taken" && e.id === "down-1"), 20_000, "down-1 taken");
 	await sleep(1500);
-	process.kill(piPid(), "SIGKILL"); // a crash (the pid Pi-personal reported)
+	process.kill(piPid(), "SIGKILL"); // a crash (the pid Pi-Personal reported)
 	assert.equal((await t.cli("stop", "main")).code, 0); // at once: pi is down, or just coming back
 	const mid = port.end(P());
 	assert.equal((await t.cli("start", "main")).code, 0);
@@ -445,7 +445,7 @@ test("the agent sees who wrote: the Telegram channel starts its text with a From
 	const u = dm(BOB, "who am I?");
 	await until(() => evs("main").some((e) => e.type === "settled" && has(e, `tg-${u}`)), 30_000, "Bob's message to settle");
 	const asked = t.model.requests.filter((r) => /who am I\?/.test(r.raw)).at(-1)!;
-	assert.match(asked.raw, /^From: Bob \(Telegram user 1002\) · telegram:1002\n\nwho am I\?/); // written by the channel, not the core
+	assert.match(asked.raw, /^From: "Bob" \(Telegram user 1002\) · telegram:1002\n\nwho am I\?/); // written by the channel, not the core
 	assert.equal((await t.cli("send", "main", "plain line", "--wait", "--timeout", "30")).stdout.trim(), "echo: plain line");
 	assert.equal(t.model.requests.filter((r) => /plain line/.test(r.raw)).at(-1)!.raw, "plain line");
 	assert.match(fs.readFileSync(path.join(folder("main"), "AGENTS.md"), "utf8"), /Several people may write to you/);

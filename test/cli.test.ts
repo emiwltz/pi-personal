@@ -110,7 +110,7 @@ test("init requires --model", async () => {
 });
 
 test("login hands --api-key and --no-browser to pi", async () => {
-	// With no provider, pi prints its own usage; the old code dropped the flags and Pi-personal printed its own usage.
+	// With no provider, pi prints its own usage; the old code dropped the flags and Pi-Personal printed its own usage.
 	const a = await t.cli("login", "--api-key");
 	assert.match(a.stdout + a.stderr, /Usage: pi auth login/);
 	const b = await t.cli("login", "--no-browser");
@@ -123,7 +123,7 @@ test("login hands --api-key and --no-browser to pi", async () => {
 	const c2 = await t.cli("login", "anthropic", "--api-key", "--no-browser");
 	assert.equal(c2.code, 1);
 	assert.match(c2.stdout + c2.stderr, /--no-browser only applies/);
-	// No argument at all is Pi-personal's own usage error.
+	// No argument at all is Pi-Personal's own usage error.
 	const d = await t.cli("login");
 	assert.equal(d.code, 2);
 	assert.match(d.stderr, /usage: pp login/);
@@ -195,7 +195,7 @@ test("the shim runs the Node found at install time, quoted, in an install folder
 	assert.ok(fs.existsSync(root), "the spaced copy exists (made by the test of paths with spaces)");
 	const r = await shim(process.execPath, root, "/usr/bin:/bin"); // a PATH without the right Node: only the baked-in one can work
 	assert.equal(r.code, 0, r.out);
-	assert.match(r.out, /Pi-personal \d+\.\d+\.\d+/);
+	assert.match(r.out, /Pi-Personal \d+\.\d+\.\d+/);
 	assert.ok(r.text.includes(process.execPath), "the Node path is written in the shim");
 });
 
@@ -203,5 +203,5 @@ test("if that Node has moved, the shim falls back to the Node on the PATH", asyn
 	const root = path.join(t.dir, "Mes Outils é", "pi-personal");
 	const r = await shim("/nonexistent/bin/node", root, `${path.dirname(process.execPath)}:/usr/bin:/bin`);
 	assert.equal(r.code, 0, r.out);
-	assert.match(r.out, /Pi-personal \d+\.\d+\.\d+/);
+	assert.match(r.out, /Pi-Personal \d+\.\d+\.\d+/);
 });

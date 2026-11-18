@@ -3,13 +3,13 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { ENV, PRODUCT, SLUG } from "./name.ts";
+import { ENV, MAC_FOLDER, SLUG } from "./name.ts";
 
 /** The root of the private area: `$PI_PERSONAL_HOME`, or the platform's per-user state directory. */
 export function home(env: NodeJS.ProcessEnv = process.env): string {
 	const set = env[`${ENV}_HOME`];
 	if (set) return path.resolve(set);
-	if (process.platform === "darwin") return path.join(os.homedir(), "Library", "Application Support", PRODUCT);
+	if (process.platform === "darwin") return path.join(os.homedir(), "Library", "Application Support", MAC_FOLDER);
 	const state = env.XDG_STATE_HOME || path.join(os.homedir(), ".local", "state");
 	return path.join(state, SLUG);
 }

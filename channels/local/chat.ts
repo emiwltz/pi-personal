@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// The local channel: talk to a Pi-personal agent from the command line, through the port and nothing else.
-// It is also the worked example of docs/write-a-channel.md. It imports nothing from Pi-personal's core:
+// The local channel: talk to a Pi-Personal agent from the command line, through the port and nothing else.
+// It is also the worked example of docs/write-a-channel.md. It imports nothing from Pi-Personal's core:
 // everything it does is described in docs/port.md.
 //
 //   PI_PERSONAL_PORT=$(pp port main) node channels/local/chat.ts      (or simply: pp chat main)

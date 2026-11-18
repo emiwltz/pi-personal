@@ -1,6 +1,6 @@
 # The port, version 1
 
-The port is the only way into and out of a Pi-personal agent. Every channel, script and extension that talks to an agent uses it. It is a folder of plain files: you can read it with `ls` and `cat`, and write a client for it in any language in an afternoon.
+The port is the only way into and out of a Pi-Personal agent. Every channel, script and extension that talks to an agent uses it. It is a folder of plain files: you can read it with `ls` and `cat`, and write a client for it in any language in an afternoon.
 
 ```
 <port>/
@@ -11,9 +11,9 @@ The port is the only way into and out of a Pi-personal agent. Every channel, scr
   events.jsonl      everything the agent says and does, one JSON object per line; it only grows
 ```
 
-`pp port <agent>` prints the folder. A program started by Pi-personal as a channel receives it in `PI_PERSONAL_PORT`.
+`pp port <agent>` prints the folder. A program started by Pi-Personal as a channel receives it in `PI_PERSONAL_PORT`.
 
-**Trust.** Anyone who can write to the port can drive the agent, and the agent can do anything your user account can do. The port is protected only by file permissions: it lives in Pi-personal's private area (mode `0700`), readable by your user alone, the same trust boundary as Herdr Core's own socket. Pi-personal adds no authentication on top. Deciding who may talk to an agent is each channel's job.
+**Trust.** Anyone who can write to the port can drive the agent, and the agent can do anything your user account can do. The port is protected only by file permissions: it lives in Pi-Personal's private area (mode `0700`), readable by your user alone, the same trust boundary as Herdr Core's own socket. Pi-Personal adds no authentication on top. Deciding who may talk to an agent is each channel's job.
 
 ## Sending a message
 
@@ -33,8 +33,8 @@ Write one JSON file into `inbox/`, named after the message's identifier:
 |---|---|---|
 | `id` | yes | Chosen by you. 1 to 128 characters from `A-Z a-z 0-9 . _ -`, not starting with a dot. The file name is `<id>.json`. Sending the same `id` twice has the effect of sending it once. |
 | `text` | yes | The message. May be empty if there are attachments. |
-| `attachments` | no | Absolute paths of files the agent should look at. They are given to the agent as paths; Pi-personal does not read, convert or delete them. |
-| `from` | no | The channel's own data about the message (for example the message to quote in the answer): any JSON object of at most 4 KB. Pi-personal stores it and gives it back, unchanged, on the events that answer this message; it never reads it. It is not an address: `conversation` is. |
+| `attachments` | no | Absolute paths of files the agent should look at. They are given to the agent as paths; Pi-Personal does not read, convert or delete them. |
+| `from` | no | The channel's own data about the message (for example the message to quote in the answer): any JSON object of at most 4 KB. Pi-Personal stores it and gives it back, unchanged, on the events that answer this message; it never reads it. It is not an address: `conversation` is. |
 | `conversation` | no | Which conversation the message belongs to, and so where its answer goes: a string of up to 200 characters, the same for every message of one conversation, `<channel>:<the service's own id>` (`telegram:4242`, `mail:alice@example.com`). The channel that owns the prefix routes the answers. The agent answers one conversation at a time: a reply never mixes two of them. Messages without it all belong to one shared conversation. |
 
 **Write it atomically**, so the agent never sees half a file:
@@ -58,7 +58,7 @@ Files whose name starts with a dot, and anything that is not a regular file, are
 
 **Position.** An event's position is the byte offset where its line starts. To follow the agent, read from the offset where you stopped, handle each complete line (one that ends with a newline), and remember the offset after the last line you handled. After a restart, start from there: you will see nothing twice and miss nothing. A new reader starts at the current end of the file, to see only what comes next.
 
-**Keeping it small.** Pi-personal never cuts or moves the file (it grows by about a kilobyte per message). To start a new one, stop the agent (`pp stop`, which stops its channels too) and move `events.jsonl` aside: a reader whose offset is past the end of the file reads the new file from its start.
+**Keeping it small.** Pi-Personal never cuts or moves the file (it grows by about a kilobyte per message). To start a new one, stop the agent (`pp stop`, which stops its channels too) and move `events.jsonl` aside: a reader whose offset is past the end of the file reads the new file from its start.
 
 ### Event types
 
@@ -74,7 +74,7 @@ Files whose name starts with a dot, and anything that is not a regular file, are
 | `status` | `state`, and `kind`, `question` when blocked | `working`, `idle` or `blocked`. When blocked, `kind` is what pi waits for: `select`, `confirm`, `input`, `editor` or `custom`. |
 | `started` | `pid`, `safeMode` | The agent's session is up and reading the port. `safeMode` lists the agent's extensions turned off (safe mode), or is `null`. |
 | `restarted` | `reason` | The keeper is starting the agent again, and why. |
-| `safe_mode` | `extensions`, `off`, `reason` | `extensions` failed to load, so the agent runs with only Pi-personal's bridge: every extension listed in `off` (and any pi finds by itself) is turned off. Safe mode ends at the next start once they load again. |
+| `safe_mode` | `extensions`, `off`, `reason` | `extensions` failed to load, so the agent runs with only Pi-Personal's bridge: every extension listed in `off` (and any pi finds by itself) is turned off. Safe mode ends at the next start once they load again. |
 | `failed` | `reason`, `retryAt` | The agent failed to start too many times. The keeper will try again at `retryAt`. |
 | `stopped` | | The agent was stopped on purpose. |
 
@@ -84,7 +84,7 @@ Events about a channel rather than the agent carry `"channel": "<name>"` (for ex
 
 **One message, one run, one last word.** The agent works on one message at a time; a message that arrives meanwhile waits its turn (see Order). Each message ends with a `settled` event naming it: with its replies (`message` events) before it, or with an `error` on it when there was none. Tell the sender: silence is the worst answer.
 
-**`blocked`.** When the agent waits for a person (a permission or a question), the `status` event says `state: "blocked"` with the `kind` and, when the harness gives it, the `question` text. Pi-personal never answers. Messages sent meanwhile wait in `inbox/` and are taken in once the agent can read them.
+**`blocked`.** When the agent waits for a person (a permission or a question), the `status` event says `state: "blocked"` with the `kind` and, when the harness gives it, the `question` text. Pi-Personal never answers. Messages sent meanwhile wait in `inbox/` and are taken in once the agent can read them.
 
 New event types and fields may appear in later versions of protocol 1. Ignore what you do not know.
 
@@ -92,7 +92,7 @@ New event types and fields may appear in later versions of protocol 1. Ignore wh
 
 The port is open to extensions without any change to the core:
 
-- **Names containing a dot belong to extensions**, except those starting with `pi-personal.`, which are the core's. An event whose `type` contains a dot (`telegram.react`, `voice.delta`, `myext.progress`), a folder of the port whose name contains a dot, a field whose name contains a dot: Pi-personal never writes, reads or removes them. Any program may append such an event to `events.jsonl`: one JSON line, written in one `write` to the file opened for appending. Pick a prefix of your own.
+- **Names containing a dot belong to extensions**, except those starting with `pi-personal.`, which are the core's. An event whose `type` contains a dot (`telegram.react`, `voice.delta`, `myext.progress`), a folder of the port whose name contains a dot, a field whose name contains a dot: Pi-Personal never writes, reads or removes them. Any program may append such an event to `events.jsonl`: one JSON line, written in one `write` to the file opened for appending. Pick a prefix of your own.
 - **Inside the agent.** A pi extension (in the agent's `.pi/extensions/`) runs inside the agent's session, with `PI_PERSONAL_PORT` set. Each port message reaches the session as a custom message, `customType: "pi-personal.message"`, with `details: { id, from?, conversation? }`; text typed in the terminal is a user message. With pi's own extension API it can watch a reply as it forms, add a tool, stop a run, and write its own events to the port. A channel and such an extension make a pair: streaming for a voice call, reactions, a "stop" from the phone, a file sent back. The same rule holds there: custom message types and session entries named `<prefix>.<name>` belong to the extension that chose the prefix; `pi-personal.` is the bridge's.
 
 An ability joins the port itself (as a new optional field or event) only once such a pair has proven it, and then only by addition.
@@ -110,4 +110,4 @@ Anything that can run a command can talk to an agent this way: a cron job, a scr
 
 ## Versions
 
-`version` holds `1`. Within version 1, Pi-personal only adds: new event types, new optional fields. A change that would break an existing client gets a new version number and a new folder layout.
+`version` holds `1`. Within version 1, Pi-Personal only adds: new event types, new optional fields. A change that would break an existing client gets a new version number and a new folder layout.

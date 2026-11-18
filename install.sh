@@ -1,14 +1,14 @@
 #!/bin/sh
-# Pi-personal's installer, for Linux and macOS:
+# Pi-Personal's installer, for Linux and macOS:
 #
 #   curl -fsSL https://raw.githubusercontent.com/emiwltz/pi-personal/main/install.sh | sh
 #
 # or, from a copy of the source: ./install.sh
 #
-# It puts Pi-personal and its own pinned pi in ~/.local/share/pi-personal (with an official Node.js there too, if
+# It puts Pi-Personal and its own pinned pi in ~/.local/share/pi-personal (with an official Node.js there too, if
 # this machine has none recent enough), and the `pp` command in ~/.local/bin; then it runs `pp setup`, which sets up
 # Herdr Core, a model provider and your agent. Nothing else on the machine changes, except your shell's PATH if you
-# say yes. Running it again updates Pi-personal and keeps everything else.
+# say yes. Running it again updates Pi-Personal and keeps everything else.
 #
 #   PI_PERSONAL_INSTALL_DIR, PI_PERSONAL_BIN_DIR   where to install (defaults above)
 #   PI_PERSONAL_REF=<branch or tag>                the version to download (default: main)
@@ -32,7 +32,7 @@ main() {
   case "$(uname -s)" in
     Linux) OS=linux ;;
     Darwin) OS=darwin ;;
-    *) fail "Pi-personal runs on Linux and macOS" ;;
+    *) fail "Pi-Personal runs on Linux and macOS" ;;
   esac
   case "$(uname -m)" in
     x86_64 | amd64) CPU=x64 ;;
@@ -49,14 +49,14 @@ main() {
 
   # A folder that is neither empty nor an earlier install is never replaced.
   if [ -d "$DEST" ] && [ ! -f "$DEST/.installed" ] && [ -n "$(ls -A "$DEST" 2>/dev/null)" ]; then
-    fail "$DEST exists and is not a Pi-personal install: choose another folder (PI_PERSONAL_INSTALL_DIR)"
+    fail "$DEST exists and is not a Pi-Personal install: choose another folder (PI_PERSONAL_INSTALL_DIR)"
   fi
 
   TMP=$(mktemp -d "${TMPDIR:-/tmp}/pi-personal.XXXXXX") || fail "cannot create a temporary folder"
   STAGE="$DEST.new.$$"
   trap 'rm -rf "$TMP" "$STAGE"' EXIT
   trap 'exit 130' INT TERM HUP # so that the cleanup above runs on Ctrl+C too (dash skips it otherwise)
-  [ -n "${PI_PERSONAL_UPDATING:-}" ] || say "Pi-personal: your own agent, living in Herdr Core, reachable from anywhere."
+  [ -n "${PI_PERSONAL_UPDATING:-}" ] || say "Pi-Personal: your own agent, living in Herdr Core, reachable from anywhere."
 
   # ---- the source: this copy, a given one, or the latest from GitHub --------------------------------------------
   SRC=
@@ -66,17 +66,17 @@ main() {
   elif [ -f "$0" ] && [ "$(basename "$0")" = install.sh ] && [ -f "$(dirname "$0")/core/cli.ts" ]; then
     SRC=$(cd "$(dirname "$0")" && pwd)
   else
-    say "Downloading Pi-personal ($REF)..."
+    say "Downloading Pi-Personal ($REF)..."
     mkdir -p "$TMP/src"
     curl -fsSL --proto '=https' "https://github.com/$REPO/archive/$REF.tar.gz" -o "$TMP/src.tar.gz" || fail "cannot download https://github.com/$REPO ($REF)"
     tar -xzf "$TMP/src.tar.gz" -C "$TMP/src" || fail "the download from https://github.com/$REPO ($REF) is not a source archive"
   fi
   if [ -z "$SRC" ]; then
     found=$(find "$TMP/src" -maxdepth 3 -path '*/core/cli.ts' | head -n 1)
-    [ -n "$found" ] || fail "no Pi-personal source in what was downloaded"
+    [ -n "$found" ] || fail "no Pi-Personal source in what was downloaded"
     SRC=$(dirname "$(dirname "$found")")
   fi
-  [ -f "$SRC/core/cli.ts" ] || fail "no Pi-personal source in $SRC"
+  [ -f "$SRC/core/cli.ts" ] || fail "no Pi-Personal source in $SRC"
   [ "$SRC" = "$DEST" ] && fail "run the installer from a copy of the source, not from the install folder"
 
   # ---- Node.js: the machine's, if recent enough; else an official build in the install folder -------------------
@@ -107,8 +107,8 @@ main() {
     "$STAGE/node/$NAME/bin/node" --version >/dev/null || fail "the Node.js downloaded does not run here"
   fi
 
-  # ---- Pi-personal and its pinned pi ------------------------------------------------------------------------------
-  say "Installing Pi-personal into $DEST..."
+  # ---- Pi-Personal and its pinned pi ------------------------------------------------------------------------------
+  say "Installing Pi-Personal into $DEST..."
   mkdir -p "$STAGE"
   for f in core channels docs package.json package-lock.json README.md LICENSE install.sh; do
     if [ -e "$SRC/$f" ]; then cp -R "$SRC/$f" "$STAGE/"; fi
@@ -117,7 +117,7 @@ main() {
 
   # The pp command, unless another program already has that name in this folder: then only the long name.
   NAMES="pp pi-personal"
-  if [ -e "$BIN/pp" ] && ! grep -q "Pi-personal's command" "$BIN/pp" 2>/dev/null; then
+  if [ -e "$BIN/pp" ] && ! grep -qi "Pi-Personal's command" "$BIN/pp" 2>/dev/null; then
     say "note: $BIN/pp is another program; it is left alone, and the command is installed as pi-personal only"
     NAMES="pi-personal"
   fi
@@ -132,7 +132,7 @@ main() {
   for n in $NAMES; do
 cat > "$BIN/$n" <<SHIM
 #!/bin/sh
-# Pi-personal's command. Its folder comes first on the PATH, so Herdr Core's hc, installed beside it, is found.
+# Pi-Personal's command. Its folder comes first on the PATH, so Herdr Core's hc, installed beside it, is found.
 PATH="$BIN:\$PATH"; export PATH
 : "\${PI_PERSONAL_COMMAND:=$n}"; export PI_PERSONAL_COMMAND # the name it prints in the commands it suggests
 [ -x "$NODE" ] && exec "$NODE" "$DEST/core/cli.ts" "\$@"
@@ -147,7 +147,7 @@ SHIM
   # ---- the PATH: the command must be found, and before any other pp (macOS has a Perl tool by that name) -------
   first=$(command -v "$CMD" 2>/dev/null || true)
   if [ "$first" != "$BIN/$CMD" ]; then
-    LINE="export PATH=\"$BIN:\$PATH\" # added by Pi-personal's installer"
+    LINE="export PATH=\"$BIN:\$PATH\" # added by Pi-Personal's installer"
     case ${SHELL:-} in
       */zsh) RC="$HOME/.zshrc" ;;
       */bash) if [ "$OS" = linux ]; then RC="$HOME/.bashrc"; elif [ -f "$HOME/.bash_profile" ]; then RC="$HOME/.bash_profile"; else RC="$HOME/.profile"; fi ;;
@@ -156,7 +156,7 @@ SHIM
     esac
     if [ -z "$RC" ]; then
       say "To find $CMD in new terminals, run once: fish_add_path -m $BIN"
-    elif grep -qF "added by Pi-personal's installer" "$RC" 2>/dev/null; then :
+    elif grep -qiF "added by Pi-Personal's installer" "$RC" 2>/dev/null; then :
     elif yes_to "Put $BIN first on your PATH, in $RC, so that $CMD is found?"; then
       printf '\n%s\n' "$LINE" >>"$RC"
       say "Added to $RC: new terminals find $CMD."

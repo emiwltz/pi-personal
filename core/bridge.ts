@@ -1,4 +1,4 @@
-// The bridge: the one piece of Pi-personal that runs inside pi. It connects the port to the conversation.
+// The bridge: the one piece of Pi-Personal that runs inside pi. It connects the port to the conversation.
 //
 // In:  one port message, one run. The bridge keeps its own queue (the port's inbox) and, when pi is idle, starts a run
 //      with the oldest message. Messages that arrive while pi works wait their turn, in the order they were written:
@@ -115,7 +115,7 @@ const byConversation = (refs: port.Ref[]) => {
 
 export default function bridge(pi: ExtensionAPI) {
 	const portDir = process.env.PI_PERSONAL_PORT;
-	if (!portDir) throw new Error("PI_PERSONAL_PORT is not set: the Pi-personal bridge only runs under the Pi-personal runner");
+	if (!portDir) throw new Error("PI_PERSONAL_PORT is not set: the Pi-Personal bridge only runs under the Pi-Personal runner");
 	let safeMode: string[] | null = null; // the extensions turned off, when the runner started pi in safe mode
 	try {
 		safeMode = process.env.PI_PERSONAL_SAFE_MODE ? JSON.parse(process.env.PI_PERSONAL_SAFE_MODE) : null;
@@ -336,6 +336,8 @@ export default function bridge(pi: ExtensionAPI) {
 	pi.on("session_start", async (event, c) => {
 		guarded("session_start", () => {
 			ctx = c;
+			// Whoever looks at this screen (pp, Herdr) is shown how to leave it without stopping the agent.
+			if (c.hasUI) c.ui.setStatus("pi-personal", "ctrl+\\ leaves this screen · the agent keeps running");
 			known.clear();
 			handed.clear();
 			unconfirmed.clear();
@@ -359,7 +361,7 @@ export default function bridge(pi: ExtensionAPI) {
 				pi.sendMessage(
 					{
 						customType: NOTE,
-						content: `(Pi-personal restarted you after ${restarted ? `an unexpected stop: ${restarted}` : "an interruption"}. Your previous work was cut off. Continue where you left off.)`,
+						content: `(Pi-Personal restarted you after ${restarted ? `an unexpected stop: ${restarted}` : "an interruption"}. Your previous work was cut off. Continue where you left off.)`,
 						display: true,
 					},
 					{ triggerTurn: true, deliverAs: "steer" },

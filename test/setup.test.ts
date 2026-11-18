@@ -41,20 +41,24 @@ test("pp alone, before anything: says where to start", async () => {
 });
 
 test("pp setup: keeps the connected provider, creates main with pi's model, starts it, and it says hello", async () => {
-	// Answers: pi is not opened · the name "main" · no Telegram · no login service.
+	// Answers: keep pi's connection (its one model is taken) · the name "main" · Telegram later · no login service.
 	const r = await answered(["setup"], ["", "", "", "n"]);
 	assert.equal(r.code, 0, r.out);
-	assert.match(r.out, /1\/4 {2}This machine[\s\S]*Herdr Core \d+\.\d+\.\d+, running/);
-	assert.match(r.out, /2\/4 {2}A model, with pi[\s\S]*pi is connected: fake/);
+	assert.match(r.out, /◆ {2}This machine {2}1\/5[\s\S]*Herdr Core \d+\.\d+\.\d+ found[\s\S]*◇ {2}Herdr Core \d+\.\d+\.\d+, running/);
+	assert.match(r.out, /◆ {2}A model {2}2\/5[\s\S]*│ +✔ pi is connected: fake[\s\S]*◇ {2}fake · echo-1/);
+	assert.match(r.out, /no sandbox/, "the rule of the game is said before the agent runs");
+	assert.match(r.out, /main is alive\./);
+	assert.match(r.out, /◆ {2}Reach it {2}4\/5[\s\S]*Talk to main from Telegram\?[\s\S]*◆ {2}Stay alive {2}5\/5/);
 	assert.match(r.out, /main created in \S+, with fake\/echo-1/);
-	assert.match(r.out, /main › echo: Say hello/);
-	assert.match(r.out, /Talk to it: +pp chat/);
+	assert.match(r.out, /main › echo: Hello! I have just set you up/);
+	assert.match(r.out, /Open it: +pp /);
+	assert.match(r.out, /Talk to it here: +pp chat/);
 	assert.ok(fs.existsSync(path.join(t.dir, "home", "agents", "main")), "the agent's record is in the private area");
 	assert.equal(JSON.parse(fs.readFileSync(path.join(t.env.HOME ?? "", "pi-personal", "main", "pi-personal.json"), "utf8")).model, "fake/echo-1");
 });
 
 test("pp setup again: everything is kept, nothing is asked twice but the optional steps", async () => {
-	const r = await answered(["setup"], ["", "", "n"]);
+	const r = await answered(["setup"], ["", "n"]); // Telegram later · no login service
 	assert.equal(r.code, 0, r.out);
 	assert.match(r.out, /✔ main {2}fake\/echo-1/);
 	assert.doesNotMatch(r.out, /Name your agent/);
@@ -74,4 +78,15 @@ test("with one agent, commands need no name", async () => {
 	assert.match(s.stdout, /echo: no name needed/);
 	const st = await t.cli("status");
 	assert.match(st.stdout, /^main /m);
+});
+
+test("pp setup with no provider connected, outside a terminal: says so and how to do it later, and ends", async () => {
+	const bare = path.join(t.dir, "bare-home");
+	fs.mkdirSync(bare, { recursive: true, mode: 0o700 });
+	const r = await answered(["setup"], [], { ...t.env, PI_PERSONAL_HOME: bare });
+	assert.equal(r.code, 1, r.out);
+	assert.match(r.out, /This step needs a terminal\. Later: pp setup, or pp login <provider> --api-key/);
+	assert.match(r.out, /No provider connected\. Later: pp setup/);
+	assert.match(r.out, /◇ {2}no model yet/);
+	assert.doesNotMatch(r.out, /Name your agent/);
 });

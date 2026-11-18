@@ -193,7 +193,7 @@ test("uninstall --purge refuses when an agent's folder sits inside the private a
 	assert.deepEqual(fs.readdirSync(path.join(l.home, "agents", "diary")), recordFiles, "nothing was changed");
 });
 
-test("uninstall --purge refuses a private area that holds the home folder, or is not Pi-personal's", async () => {
+test("uninstall --purge refuses a private area that holds the home folder, or is not Pi-Personal's", async () => {
 	const l = purgeLab("notmine");
 	// PI_PERSONAL_HOME = HOME itself.
 	fs.writeFileSync(path.join(l.userHome, "precious.txt"), "do not delete");
@@ -201,7 +201,7 @@ test("uninstall --purge refuses a private area that holds the home folder, or is
 	const same = await run(process.execPath, [CLI, "uninstall", "--purge"], { env }).then(() => 0, (e) => e.code as number);
 	assert.notEqual(same, 0);
 	assert.ok(fs.existsSync(path.join(l.userHome, "precious.txt")));
-	// A folder that is not Pi-personal's (no agents/, no pi/).
+	// A folder that is not Pi-Personal's (no agents/, no pi/).
 	const other = path.join(l.userHome, "docs");
 	fs.mkdirSync(other);
 	fs.writeFileSync(path.join(other, "thesis.txt"), "years of work");

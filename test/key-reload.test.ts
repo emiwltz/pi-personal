@@ -1,4 +1,4 @@
-// A running agent whose provider refused its key: the person writes the right key into Pi-personal's auth.json, and the
+// A running agent whose provider refused its key: the person writes the right key into Pi-Personal's auth.json, and the
 // same agent answers the next message without a restart. The fake provider has no apiKey of its own (pi takes the key
 // from auth.json) and answers 401 to any other key.
 import { after, before, test } from "node:test";

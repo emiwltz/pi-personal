@@ -1,4 +1,4 @@
-// Install, run, uninstall: no Pi-personal process or service remains, and the agent's folder is kept.
+// Install, run, uninstall: no Pi-Personal process or service remains, and the agent's folder is kept.
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
@@ -49,14 +49,20 @@ test("install.sh, doctor, service, uninstall", async () => {
 
 	const live = () => t.hc("ls").terminals.filter((x: { name?: string }) => x.name?.startsWith("pi-personal-"));
 	assert.equal(live().length, 2); // the agent and its channel
+	// Installs up to 0.3.0 wrote the name "Pi-personal" in their marks: they are still recognised and removed.
+	const longName = path.join(bin, "pi-personal");
+	fs.writeFileSync(longName, fs.readFileSync(longName, "utf8").replaceAll("Pi-Personal's command", "Pi-personal's command"));
+	const profile = path.join(userHome, ".profile");
+	fs.writeFileSync(profile, `export KEEP=1\nexport PATH="${bin}:$PATH" # added by Pi-personal's installer\n`);
 	const out = (await p("uninstall")).stdout;
 	assert.match(out, /stopped main: (agent, fake|fake, agent)/);
 	await sleep(500);
-	assert.equal(live().length, 0, "no Pi-personal terminal is left");
+	assert.equal(live().length, 0, "no Pi-Personal terminal is left");
 	assert.ok(!fs.existsSync(unit), "the service is removed");
 	assert.match(fs.readFileSync(path.join(t.dir, "service.log"), "utf8"), mac ? /bootout gui\// : /disable --now pi-personal.timer/);
 	assert.ok(!fs.existsSync(command) && !fs.existsSync(dest), "the installed code is removed");
-	assert.ok(!fs.lstatSync(path.join(bin, "pi-personal"), { throwIfNoEntry: false }), "the long name is removed too");
+	assert.ok(!fs.lstatSync(longName, { throwIfNoEntry: false }), "the long name is removed too, with its 0.3.0 mark");
+	assert.equal(fs.readFileSync(profile, "utf8"), "export KEEP=1\n", "the 0.3.0 PATH line goes, the rest stays");
 	assert.ok(fs.existsSync(path.join(folder, "AGENTS.md")), "the agent's folder is kept");
 	assert.ok(fs.existsSync(path.join(t.home, "agents", "main", "sessions")), "the private area is kept without --purge");
 	// With --purge (from the source copy), the private area goes too; the folder still stays.

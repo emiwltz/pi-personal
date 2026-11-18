@@ -163,7 +163,7 @@ async function startWork(agent: string, id: string, sleepS: number) {
 
 test("a crash in the middle of a run still resumes the work", async () => {
 	const from = await startWork("good", "k1", 4);
-	const pid = Number(started("good").at(-1)!.pid); // the pid Pi-personal reported: pi only
+	const pid = Number(started("good").at(-1)!.pid); // the pid Pi-Personal reported: pi only
 	process.kill(pid, "SIGKILL");
 	await t.waitEvent("good", from, (e) => e.type === "started" && e.pid !== pid, 60_000);
 	await t.waitEvent("good", from, (e) => e.type === "message" && JSON.stringify(e.refs).includes('"k1"'), 60_000);

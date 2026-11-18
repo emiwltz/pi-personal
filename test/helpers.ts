@@ -1,4 +1,4 @@
-// Test harness: an isolated Herdr Core, a fake model, and a private Pi-personal home, all in a short scratch folder.
+// Test harness: an isolated Herdr Core, a fake model, and a private Pi-Personal home, all in a short scratch folder.
 // Safety first: the user's own Herdr Core carries their real work. Every hc call made by the tests goes to a
 // separate core (its own HC_SESSION and XDG directories), and the harness checks its identity before stopping it.
 import { execFile, execFileSync } from "node:child_process";

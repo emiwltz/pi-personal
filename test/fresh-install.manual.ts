@@ -5,8 +5,9 @@
 //
 // Manual, not part of `npm test`: it downloads about 100 MB and takes a few minutes. Run it before a release:
 //   node --test test/fresh-install.manual.ts
-// Its model is the tests' fake one, declared in the new private area as if the user had configured it; pi's own screen
-// is still opened by the guide, and its /model used as a person would (Ctrl+S keeps the model as pi's default).
+// Its model is the tests' fake one, declared in the new private area as if the user had configured it: the guide finds
+// it connected, keeps it, and its one model. (A real provider's sign-in, pi auth login, needs a real account: Emi's
+// own trial covers it.)
 import assert from "node:assert/strict";
 import { type ChildProcess, execFile, execFileSync, spawn } from "node:child_process";
 import * as fs from "node:fs";
@@ -30,7 +31,7 @@ function closeKeys() {
 const home = () => path.join(dir, "home");
 const pp = () => path.join(home(), ".local", "bin", "pp");
 const hcFresh = () => path.join(home(), ".local", "bin", "hc");
-const privateArea = () => (mac ? path.join(home(), "Library", "Application Support", "Pi-personal") : path.join(dir, "state", "pi-personal"));
+const privateArea = () => (mac ? path.join(home(), "Library", "Application Support", "Pi-personal") : path.join(dir, "state", "pi-personal")); // core/name.ts MAC_FOLDER
 
 before(async () => {
 	dir = fs.mkdtempSync("/tmp/pt-fresh-"); // short: Unix socket paths are limited to about 100 characters
@@ -144,59 +145,41 @@ function run(args: string[]): Promise<{ code: number; out: string }> {
 test("on a fresh machine: one command installs everything, and the guide ends with an agent that answers", { timeout: 20 * 60_000 }, async () => {
 	// The installer's own exit code, printed after it: on macOS, the pipeline's code is the last cat's.
 	const t = terminal(`sh '${path.join(ROOT, "install.sh")}'; echo "[installer exit $?]"`);
-	const node = await t.see(/Installed: Pi-personal [\d.]+ \(pi [\d.]+, Herdr Core not found, Node ([\d.]+)\)/, 10 * 60_000);
+	const node = await t.see(/Installed: Pi-Personal [\d.]+ \(pi [\d.]+, Herdr Core not found, Node ([\d.]+)\)/, 10 * 60_000);
 	assert.doesNotMatch(node, /Node 20\./, "the Node.js used is a recent one");
 	await t.see(/first on your PATH.*\[Y\/n\]/);
 	t.type("y");
 	t.type("\r");
-	await t.see(/1\/4 {2}This machine/);
+	await t.see(/◆ {2}This machine {2}1\/5/);
+	await t.see(/Herdr Core is not on this machine/);
 	await t.see(/Install Herdr Core now\?.*\[Y\/n\]/);
 	t.type("y\r");
-	await t.see(/Herdr Core [\d.]+, running/, 5 * 60_000);
-	await t.see(/2\/4 {2}A model, with pi/);
-	await t.see(/pi is connected: fake/);
-	await t.see(/Open pi, to connect another provider or choose the model\?.*\[y\/N\]/);
-	t.type("y\r");
-	// pi's own screen, as it always is: /model, Ctrl+S keeps the model as the default, Escape, /quit.
-	await t.see(/escape interrupt/, 120_000);
-	t.type("/model");
-	await t.see(/\/model/);
-	// On a fresh machine pi first fetches its search tools (ripgrep, fd); until then it keeps what was typed and says
-	// "Startup is still in progress": Enter again, as a person would.
-	for (let i = 0; ; i++) {
-		t.type("\r");
-		try {
-			await t.see(/echo-1/, 5_000);
-			break;
-		} catch (err) {
-			if (i >= 24) throw err;
-		}
-	}
-	t.type("\x13"); // Ctrl+S
-	await t.see(/Default model: fake\/echo-1/);
-	t.type("\x1b");
-	await new Promise((r) => setTimeout(r, 500));
-	t.type("/quit");
-	await new Promise((r) => setTimeout(r, 500));
+	await t.see(/◇ {2}Herdr Core [\d.]+, running/, 5 * 60_000);
+	await t.see(/◆ {2}A model {2}2\/5/);
+	await t.see(/pi is connected: fake/, 120_000);
+	await t.see(/Use it\?/);
 	t.type("\r");
-	await t.see(/pi is connected: fake/, 60_000);
-	assert.equal(JSON.parse(fs.readFileSync(path.join(privateArea(), "pi", "settings.json"), "utf8")).defaultModel, "echo-1", "pi kept the model it was told to");
-	await t.see(/3\/4 {2}Your agent/);
+	await t.see(/◇ {2}fake · echo-1/);
+	await t.see(/◆ {2}Your agent {2}3\/5/);
 	await t.see(/Name your agent/);
 	t.type("\r");
 	await t.see(/main created in ~\/pi-personal\/main, with fake\/echo-1/);
-	await t.see(/main › echo: Say hello/, 180_000);
-	await t.see(/4\/4 {2}Reach it from anywhere/);
-	await t.see(/Talk to main from Telegram\?.*\[y\/N\]/);
-	t.type("n\r");
+	await t.see(/there is no sandbox/);
+	await t.see(/main › echo: Hello! I have just set you up/, 180_000);
+	await t.see(/◆ {2}Reach it {2}4\/5/);
+	await t.see(/Talk to main from Telegram\?/);
+	t.type("\r"); // Later
+	await t.see(/◆ {2}Stay alive {2}5\/5/);
 	await t.see(/Bring main back by itself if it stops\?.*\[Y\/n\]/);
 	t.type("n\r"); // the real login service manager is not touched by a test
-	await t.see(/Talk to it: +\S*pp chat/); // the full path: this terminal does not find pp yet
+	await t.see(/main is ready, and waits for your answer/);
+	await t.see(/Talk to it here: +\S*pp chat/); // the full path: this terminal does not find pp yet
 	await t.see(/In this terminal, pp is not found yet/);
+	assert.ok(fs.existsSync(path.join(privateArea(), "herdr-core-installed")), "the guide remembers it installed Herdr Core");
 	const code = /\[installer exit (\d+)\]/.exec(await t.see(/\[installer exit \d+\]/))![1];
 	assert.equal(code, "0", t.screen().slice(-2000));
 	assert.equal(await t.end(), 0, t.screen().slice(-2000));
-	assert.match(fs.readFileSync(path.join(home(), ".profile"), "utf8"), /added by Pi-personal's installer/);
+	assert.match(fs.readFileSync(path.join(home(), ".profile"), "utf8"), /added by Pi-Personal's installer/);
 });
 
 test("then the everyday commands work, and stop --all leaves nothing running", { timeout: 10 * 60_000 }, async () => {
@@ -207,6 +190,7 @@ test("then the everyday commands work, and stop --all leaves nothing running", {
 	assert.equal(s.code, 0, `exit ${s.code}: ${s.out}\n--- status ---\n${(await run(["status"])).out}\n--- log ---\n${(await run(["log"])).out.slice(-2000)}`);
 	assert.match(s.out, /echo: are you there\?/);
 	const d = await run(["doctor"]);
+	assert.match(d.out, /^Herdr Core$/m);
 	assert.match(d.out, /ok\s+Herdr Core [\d.]+/);
 	const stop = await run(["stop", "--all"]);
 	assert.equal(stop.code, 0, stop.out);

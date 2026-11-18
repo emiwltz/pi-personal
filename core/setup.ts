@@ -12,6 +12,50 @@ import { channelProgram, checkExtension, checkModel, foundExtensions, piCli, piP
 
 const NODE_MIN = "22.19.0";
 
+// ---- coming back after a restart of the machine -------------------------------------------------------------
+// The login service starts Herdr Core only when Pi-Personal installed it (then nothing else of the person's runs in
+// it), or the person said yes in pp setup (this file); and once per start of the machine.
+const bootFile = () => path.join(home(), "start-herdr-core-at-boot");
+/** May the service start Herdr Core: Pi-Personal installed it, or the person said yes (the file). */
+export const bootAllowed = () => fs.existsSync(bootFile()) || herdr.installedByUs();
+/** This start of the machine: Linux's boot id, macOS's boot time. "" when unknown (then the service starts nothing). */
+export function bootId(): string {
+	try {
+		if (process.platform === "linux") return fs.readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
+		return spawnSync("sysctl", ["-n", "kern.boottime"], { encoding: "utf8", timeout: 5_000 }).stdout.trim();
+	} catch {
+		return "";
+	}
+}
+const startedFor = () => path.join(home(), "herdr-core-started-for-boot");
+/**
+ * Should the service start Herdr Core now? Only when it may, once per start of the machine (a Herdr Core stopped
+ * since, by the person or anything else, stays stopped until the next one), and when an agent should run.
+ */
+export function bootStartDue(): { due: boolean; why: string } {
+	if (!bootAllowed()) return { due: false, why: "not allowed (pp setup can allow it)" };
+	const id = bootId();
+	if (!id) return { due: false, why: "this machine's start cannot be told apart" };
+	if (fs.existsSync(startedFor()) && fs.readFileSync(startedFor(), "utf8").trim() === id) return { due: false, why: "it was started once since this machine started, and stopped since" };
+	const wanted = agents.list().some((n) => {
+		try {
+			return !fs.existsSync(agents.loadRecord(n).paths.stopped);
+		} catch {
+			return false;
+		}
+	});
+	if (!wanted) return { due: false, why: "no agent should run" };
+	return { due: true, why: "" };
+}
+export function bootStarted(): void {
+	fs.writeFileSync(startedFor(), `${bootId()}\n`, { mode: 0o600 });
+}
+export function allowBoot(yes: boolean): void {
+	if (!yes) return fs.rmSync(bootFile(), { force: true });
+	fs.mkdirSync(home(), { recursive: true, mode: 0o700 });
+	fs.writeFileSync(bootFile(), `${new Date().toISOString()}\n`, { mode: 0o600 });
+}
+
 // ---- the login service ----------------------------------------------------------------------------------------
 
 const unitName = SLUG; // pi-personal.service, pi-personal.timer
@@ -39,7 +83,12 @@ function upCommand(): { argv: string[]; env: Record<string, string> } {
 	return {
 		argv: [...run, "up", "--if-running", "--home", home()],
 		// The PATH of the shell that installed the service: agents started by it get the same tools as from a shell.
-		env: { [`${ENV}_HC`]: hc, PATH: [...new Set([path.dirname(hc), path.dirname(process.execPath), ...(process.env.PATH ?? "").split(":").filter(Boolean), "/usr/local/bin", "/usr/bin", "/bin"])].join(":") },
+		env: {
+			// Which Herdr Core: the selection of the shell that installed the service, when it made one.
+			...Object.fromEntries(["HC_SESSION", "HC_SOCKET", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_DATA_HOME", ...(process.platform === "darwin" ? ["XDG_RUNTIME_DIR"] : [])].filter((k) => process.env[k]).map((k) => [k, process.env[k] as string])),
+			[`${ENV}_HC`]: hc,
+			PATH: [...new Set([path.dirname(hc), path.dirname(process.execPath), ...(process.env.PATH ?? "").split(":").filter(Boolean), "/usr/local/bin", "/usr/bin", "/bin"])].join(":"),
+		},
 	};
 }
 
@@ -98,6 +147,7 @@ WantedBy=timers.target
 
 function serviceUninstall(): string[] {
 	const removed: string[] = [];
+	allowBoot(false); // without the service, the permission means nothing: asked again with the next one
 	if (process.platform === "darwin") {
 		launchctl("bootout", `gui/${process.getuid?.()}/${launchLabel}`);
 		if (fs.existsSync(launchFile())) {
@@ -135,19 +185,25 @@ interface Check {
 	ok: boolean | "warn";
 	what: string;
 	detail?: string;
+	topic: string; // what it is about: printed as a heading, in this order
 }
 
 export async function doctor(): Promise<Check[]> {
 	const checks: Check[] = [];
-	const add = (ok: boolean | "warn", what: string, detail?: string) => checks.push({ ok, what, detail });
+	let topic = "This machine";
+	const add = (ok: boolean | "warn", what: string, detail?: string) => checks.push({ ok, what, detail, topic });
 	const nodeOk = herdr.atLeast(process.versions.node, NODE_MIN);
 	add(nodeOk, `Node.js ${process.versions.node}`, nodeOk ? undefined : `needs ${NODE_MIN} or newer`);
 	try {
 		const p = piPackage();
-		add(true, `pi ${p.version} (Pi-personal's own copy)`, p.dir);
+		add(true, `pi ${p.version} (Pi-Personal's own copy)`, p.dir);
 	} catch (err) {
 		add(false, "pi", (err as Error).message);
 	}
+	const h = home();
+	const mode = fs.existsSync(h) ? fs.statSync(h).mode & 0o777 : undefined;
+	add(mode === undefined ? "warn" : (mode & 0o077) === 0, `private area ${h}`, mode === undefined ? "not created yet (it is created by init)" : (mode & 0o077) === 0 ? undefined : `mode ${mode.toString(8)}: should be 700`);
+	topic = "Herdr Core";
 	const hc = herdr.find();
 	if (!hc) add(false, "Herdr Core", `not found: ${COMMAND} setup installs it`);
 	else {
@@ -161,11 +217,14 @@ export async function doctor(): Promise<Check[]> {
 				add(false, "Herdr Core", (err as Error).message);
 			}
 	}
-	const h = home();
-	const mode = fs.existsSync(h) ? fs.statSync(h).mode & 0o777 : undefined;
-	add(mode === undefined ? "warn" : (mode & 0o077) === 0, `private area ${h}`, mode === undefined ? "not created yet (it is created by init)" : (mode & 0o077) === 0 ? undefined : `mode ${mode.toString(8)}: should be 700`);
+	topic = "Coming back by itself";
 	add(serviceInstalled() ? true : "warn", "login service", serviceInstalled() ? "installed" : `not installed (optional): ${COMMAND} service install`);
+	if (!serviceInstalled()) add("warn", "after a restart of this machine", `Herdr Core and the agents are started by you (${COMMAND} start)`);
+	else if (!bootAllowed()) add("warn", "after a restart of this machine", `Herdr Core is started by you (${COMMAND} start); ${COMMAND} setup can let the login service do it`);
+	else if (herdr.stopsAtLogout()) add("warn", "after a restart of this machine", `the login service starts Herdr Core, then the agents, once you log in; without logging in: sudo loginctl enable-linger ${os.userInfo().username}`);
+	else add(true, "after a restart of this machine", "the login service starts Herdr Core, then the agents");
 	for (const name of agents.list()) {
+		topic = `Agent ${name}`;
 		let agent: agents.Agent;
 		try {
 			agent = agents.load(name);
@@ -254,10 +313,10 @@ export async function uninstall(purge: boolean): Promise<string[]> {
 	const marker = path.join(ROOT, ".installed");
 	if (fs.existsSync(marker)) {
 		// One installed command per line: `pp`, and the same command under its long name.
-		// Only files that still are Pi-personal's command (another program may have taken the name since).
+		// Only files that still are Pi-Personal's command (another program may have taken the name since).
 		const ours = (f: string) => {
 			try {
-				return fs.lstatSync(f).isSymbolicLink() || fs.readFileSync(f, "utf8").includes("Pi-personal's command");
+				return fs.lstatSync(f).isSymbolicLink() || fs.readFileSync(f, "utf8").toLowerCase().includes("pi-personal's command"); // "Pi-personal" until 0.3.0
 			} catch {
 				return false;
 			}
@@ -277,7 +336,7 @@ export async function uninstall(purge: boolean): Promise<string[]> {
 			} catch {
 				continue;
 			}
-			const kept = text.split("\n").filter((l) => !l.includes("# added by Pi-personal's installer"));
+			const kept = text.split("\n").filter((l) => !l.toLowerCase().includes("# added by pi-personal's installer")); // "Pi-personal" until 0.3.0
 			if (kept.length !== text.split("\n").length) {
 				fs.writeFileSync(rc, kept.join("\n"));
 				done.push(`removed the PATH line from ${rc}`);
@@ -294,7 +353,17 @@ export async function setup(cmd: string, args: string[], opt: Record<string, str
 	if (cmd === "doctor") {
 		const checks = await doctor();
 		if (json) console.log(JSON.stringify(checks, null, 2));
-		else for (const c of checks) console.log(`${c.ok === true ? "ok  " : c.ok === "warn" ? "note" : "FAIL"}  ${c.what}${c.detail ? `: ${c.detail}` : ""}`);
+		else {
+			// One heading per topic, then its lines; the levels as before (ok, note, FAIL), which scripts can read.
+			let last = "";
+			for (const c of checks) {
+				if (c.topic !== last) console.log(`${last ? "\n" : ""}${c.topic}`);
+				last = c.topic;
+				console.log(`  ${c.ok === true ? "ok  " : c.ok === "warn" ? "note" : "FAIL"}  ${c.what}${c.detail ? `: ${c.detail}` : ""}`);
+			}
+			const bad = checks.filter((c) => c.ok === false).length;
+			console.log(`\n${bad ? `${bad} to fix: each FAIL line says what to do.` : "Nothing to fix."}`);
+		}
 		return checks.some((c) => c.ok === false) ? 1 : 0;
 	}
 	if (cmd === "service") {

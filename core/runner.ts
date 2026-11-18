@@ -1,4 +1,4 @@
-// The runner: lives in a Pi-personal terminal of Herdr Core, runs one program (an agent's pi, or a channel),
+// The runner: lives in a Pi-Personal terminal of Herdr Core, runs one program (an agent's pi, or a channel),
 // and brings it back when it ends. It keeps the restart rules (docs/decisions/0002-keeper.md):
 // backoff, give up after 5 quick failures, try again every hour, safe mode for in-agent extensions.
 // What it knows (ready, safe mode, failed, last restart) it keeps in keeper.json, which "pp status" reads.
@@ -19,7 +19,7 @@ const STARTUP_MS = Number(process.env[`${ENV}_STARTUP_MS`] ?? 120_000); // pi mu
 const BACKOFF_MS = [500, 1000, 2000, 4000, 8000];
 const KEEP_DAYS = 30; // taken/ and rejected/ files older than this are removed (the session still knows the ids)
 
-/** The folder of the pi package Pi-personal pins (never the user's own `pi`). */
+/** The folder of the pi package Pi-Personal pins (never the user's own `pi`). */
 export function piPackage(): { dir: string; version: string; bin: string } {
 	// The package only exports for `import`, so resolve it the way an import would.
 	let dir = path.dirname(fileURLToPath(import.meta.resolve("@earendil-works/pi-coding-agent")));
@@ -30,7 +30,7 @@ export function piPackage(): { dir: string; version: string; bin: string } {
 			if (pkg.name === "@earendil-works/pi-coding-agent") return { dir, version: pkg.version, bin: typeof pkg.bin === "string" ? pkg.bin : pkg.bin.pi };
 		}
 		const up = path.dirname(dir);
-		if (up === dir) throw new Error("pi is not installed next to Pi-personal: run the installer again");
+		if (up === dir) throw new Error("pi is not installed next to Pi-Personal: run the installer again");
 		dir = up;
 	}
 }
@@ -41,18 +41,18 @@ export function piCli(): string {
 	return path.join(p.dir, p.bin);
 }
 
-/** The environment pi runs with: Pi-personal's shared pi configuration, this agent's own conversation logs. */
+/** The environment pi runs with: Pi-Personal's shared pi configuration, this agent's own conversation logs. */
 function piEnv(agent: Agent): NodeJS.ProcessEnv {
 	return {
 		...process.env,
 		PI_CODING_AGENT_DIR: piDir(),
 		PI_CODING_AGENT_SESSION_DIR: agent.paths.sessions,
-		PI_SKIP_VERSION_CHECK: "1", // Pi-personal pins pi; updating it is Pi-personal's job
+		PI_SKIP_VERSION_CHECK: "1", // Pi-Personal pins pi; updating it is Pi-Personal's job
 		PI_TELEMETRY: "0",
 	};
 }
 
-/** pi's own place for an agent's extensions: <folder>/.pi/extensions/<name>. Pi-personal keeps no list of its own. */
+/** pi's own place for an agent's extensions: <folder>/.pi/extensions/<name>. Pi-Personal keeps no list of its own. */
 export const extensionsDir = (agent: AgentRecord) => path.join(agent.folder, ".pi", "extensions");
 export const extensionPath = (agent: AgentRecord, name: string) => path.join(extensionsDir(agent), name);
 /** What pi loads from .pi/extensions/: .ts and .js files, and folders with an index.ts, an index.js or a package.json. */
@@ -77,7 +77,7 @@ export function foundExtensions(agent: AgentRecord): string[] {
  */
 export function dryStart(agent: Agent, what: { all: true } | { only: string } | { none: true }): { ok: boolean; failing: string[]; error: string } {
 	if (!fs.existsSync(agent.folder)) return { ok: false, failing: [], error: `the agent's folder ${agent.folder} is missing` };
-	const args = [piCli()]; // the bridge is left out: it is Pi-personal's own and always loads
+	const args = [piCli()]; // the bridge is left out: it is Pi-Personal's own and always loads
 	if ("only" in what) args.push("-ne", "-e", path.isAbsolute(what.only) ? what.only : extensionPath(agent, what.only));
 	else if ("none" in what) args.push("-ne");
 	if (agent.settings.model) args.push("--model", agent.settings.model); // pi checks the model while loading
@@ -210,7 +210,7 @@ const readLock = (file: string): string | undefined => {
 
 /**
  * The live runner a lock's content names, if any. A lock left by a dead process does not count, nor one whose pid
- * now belongs to another process (after a reboot, for example): the holder is a Pi-personal runner that was already
+ * now belongs to another process (after a reboot, for example): the holder is a Pi-Personal runner that was already
  * running when the lock was written.
  */
 function holderOf(raw: string): { pid: number } | undefined {
@@ -442,6 +442,9 @@ export async function runForever(agent: Agent, channel?: string): Promise<void> 
 			result = await new Promise((resolve) => {
 				let watchdog: NodeJS.Timeout | undefined;
 				try {
+					// Ctrl+C in the agent's screen is a key for pi, never a signal: not even in the moment pi is starting again
+					// (the terminal is not yet in pi's raw mode then), when it would stop pi, or this runner.
+					if (!channel && process.stdin.isTTY) spawnSync("stty", ["-isig"], { stdio: ["inherit", "ignore", "ignore"] });
 					child = spawn(prog.command, prog.args, { cwd: prog.cwd, env: prog.env, stdio: "inherit" });
 				} catch (err) {
 					resolve({ code: null, signal: null, spawnError: (err as Error).message });

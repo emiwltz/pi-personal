@@ -136,7 +136,7 @@ test("the program cannot start at all: retries stop at the limit, status failed 
 	fs.renameSync(folder(), away);
 	const from = port.end(P());
 	const t0 = Date.now();
-	process.kill(Number(started.pid)); // pi only, by the pid Pi-personal reported; its runner stays
+	process.kill(Number(started.pid)); // pi only, by the pid Pi-Personal reported; its runner stays
 	const failed = await t.waitEvent("main", from, (e) => e.type === "failed" && !e.channel, 60_000);
 	const restarts = port.events(P(), from).events.filter((e) => e.type === "restarted" && !e.channel);
 	assert.ok(restarts.length <= 5, `${restarts.length} restarts`);

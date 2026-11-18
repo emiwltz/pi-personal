@@ -1,13 +1,14 @@
 // Models and sign-ins are pi's: pi's own screen does them (/login connects a provider, with an account or an API key;
-// /model chooses the model), with Pi-personal's pi directory, shared by all agents. Pi-personal only reads what pi
+// /model chooses the model), with Pi-Personal's pi directory, shared by all agents. Pi-Personal only reads what pi
 // stored: which providers pi lists models for, and the model pi keeps as its default. Nothing here prints a secret.
-import { spawnSync } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import { piDir, privateDir, ROOT } from "./paths.ts";
+import { preparePi } from "./agents.ts";
 import { piCli, piPackage } from "./runner.ts";
 
 export interface Provider {
@@ -54,7 +55,7 @@ export async function defaultModel(id: string): Promise<string | undefined> {
 
 const ourAuth = () => path.join(piDir(), "auth.json");
 
-/** Which providers Pi-personal's pi holds credentials for, and of which kind: ids and kinds only. */
+/** Which providers Pi-Personal's pi holds credentials for, and of which kind: ids and kinds only. */
 export function stored(file = ourAuth()): Record<string, Kind> {
 	let data: unknown;
 	try {
@@ -68,7 +69,7 @@ export function stored(file = ourAuth()): Record<string, Kind> {
 	return out;
 }
 
-/** Change Pi-personal's credentials file under pi's own lock, keeping it readable by its owner only. */
+/** Change Pi-Personal's credentials file under pi's own lock, keeping it readable by its owner only. */
 async function editAuth(change: (data: Record<string, unknown>) => void): Promise<void> {
 	privateDir(piDir());
 	const file = ourAuth();
@@ -102,12 +103,12 @@ function storedOnly(): NodeJS.ProcessEnv {
 	return Object.fromEntries(Object.entries(piEnv()).filter(([k]) => keep.test(k)));
 }
 
-/** pi's own screen, in this terminal, with Pi-personal's pi directory: /login and /model there, /quit to come back.
+/** pi's own screen, in this terminal, with Pi-Personal's pi directory: /login and /model there, /quit to come back.
  * Without a session (nothing to keep), in the private area (no project files around), with only what agents get from
  * the environment (a key in this terminal's environment would not reach them), plus what its screen and a browser
  * sign-in need. The exit code of pi. */
 export function openPi(): number {
-	privateDir(piDir());
+	preparePi(); // its shared settings first: in this screen too, Ctrl+C and Ctrl+D do not quit
 	return spawnSync(process.execPath, [piCli(), "--no-session"], { stdio: "inherit", cwd: piDir(), env: { ...storedOnly(), ...screenEnv() } }).status ?? 1;
 }
 const screenEnv = () => Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(COLORTERM|TERM_PROGRAM|TERM_PROGRAM_VERSION|KITTY_WINDOW_ID|WT_SESSION|DISPLAY|WAYLAND_DISPLAY|XAUTHORITY|DBUS_SESSION_BUS_ADDRESS|BROWSER)$/.test(k)));
@@ -116,7 +117,7 @@ const screenEnv = () => Object.fromEntries(Object.entries(process.env).filter(([
  * their provider. A terminal left in bracketed-paste mode (by another program) wraps a paste in marks, which pi's hidden
  * prompt drops, or keeps in the key: plain pastes for it, and the key cleaned after. */
 export async function login(args: string[]): Promise<number> {
-	privateDir(piDir());
+	preparePi();
 	if (process.stdout.isTTY) process.stdout.write("\x1b[?2004l");
 	const r = spawnSync(process.execPath, [piCli(), "auth", "login", ...args], { stdio: "inherit", env: piEnv() });
 	const id = args.find((x) => !x.startsWith("-"));
@@ -151,10 +152,23 @@ export interface Model {
 	thinking?: boolean;
 }
 
-/** The models of the providers Pi-personal is connected to (by its sign-ins, or by pi's models.json), from pi's own list. */
+/** The models of the providers Pi-Personal is connected to (by its sign-ins, or by pi's models.json), from pi's own list. */
 export function models(search?: string): Model[] {
 	const r = spawnSync(process.execPath, [piCli(), "--list-models", ...(search ? [search] : [])], { encoding: "utf8", env: storedOnly(), timeout: 60_000 });
-	const rows = (r.stdout ?? "").split("\n").map((l) => l.trim().split(/\s{2,}/));
+	return parseModels(r.stdout ?? "");
+}
+/** The same, without blocking (so that a wait can be drawn meanwhile); `error` when pi did not answer, which is not the
+ * same as "nothing connected". */
+export function modelsAsync(): Promise<{ list: Model[]; error?: string }> {
+	return new Promise((resolve) => {
+		execFile(process.execPath, [piCli(), "--list-models"], { encoding: "utf8", env: storedOnly(), timeout: 60_000, maxBuffer: 16 * 1024 * 1024 }, (err, stdout, stderr) => {
+			const list = parseModels(stdout ?? "");
+			resolve(err && !list.length ? { list, error: (stderr || err.message).trim().split("\n").pop() } : { list });
+		});
+	});
+}
+function parseModels(stdout: string): Model[] {
+	const rows = stdout.split("\n").map((l) => l.trim().split(/\s{2,}/));
 	const head = rows.findIndex((c) => c[0] === "provider" && c[1] === "model");
 	if (head < 0) return [];
 	return rows
@@ -165,8 +179,7 @@ export function models(search?: string): Model[] {
 
 /** The model pi keeps as its default (chosen in pi with /model, then Ctrl+S), if its provider is connected; otherwise
  * what pi itself starts with for the first connected provider: pi's default for it, or the first model pi lists. */
-export async function chosenModel(): Promise<string | undefined> {
-	const list = models();
+export async function chosenModel(list: Model[] = models()): Promise<string | undefined> {
 	let s: { defaultProvider?: unknown; defaultModel?: unknown } = {};
 	try {
 		s = JSON.parse(fs.readFileSync(path.join(piDir(), "settings.json"), "utf8")) ?? {};

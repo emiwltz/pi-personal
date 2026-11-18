@@ -1,12 +1,13 @@
-// The few Herdr Core verbs Pi-personal uses: run, get, ls, kill, rm. Everything goes through the `hc` command,
+// The few Herdr Core verbs Pi-Personal uses: run, get, ls, kill, rm. Everything goes through the `hc` command,
 // with the caller's environment, so the same code reaches the user's default core in real use and an
 // isolated one in tests (HC_SESSION and the XDG directories select the instance).
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFile, execFileSync, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import { ENV } from "./name.ts";
+import { home } from "./paths.ts";
 
 export interface Status {
 	state: string;
@@ -35,9 +36,11 @@ export class HerdrError extends Error {
 	}
 }
 
-/** Herdr Core's command: the one set for Pi-personal, else the one find() picks (looked up once), else plain hc. */
+/** Herdr Core's command: the one set for Pi-Personal, else the one find() picks (looked up once), else plain hc. */
 let found: string | undefined;
 const bin = () => process.env[`${ENV}_HC`] || (found ??= find()?.bin ?? "hc");
+/** Herdr Core's command, as every call here uses it: for programs run in this terminal (`hc attach`). */
+export const command = () => bin();
 
 function hc(args: string[]): any {
 	let out: string;
@@ -64,7 +67,7 @@ function hc(args: string[]): any {
 
 /**
  * Where the selected core listens, computed the way Herdr Core does (paths.rs, platform/unix.rs). Every `hc`
- * command starts the core when it is not running; this lets Pi-personal ask "is it running?" without starting it.
+ * command starts the core when it is not running; this lets Pi-Personal ask "is it running?" without starting it.
  */
 function socketPath(env: NodeJS.ProcessEnv = process.env): string {
 	if (env.HC_SOCKET) return env.HC_SOCKET;
@@ -101,7 +104,7 @@ export function version(): string {
 
 // ---- finding, installing and starting Herdr Core (for `pp setup`) ---------------------------------------------
 
-export const MIN_VERSION = "0.1.18"; // the oldest Herdr Core Pi-personal is tested with
+export const MIN_VERSION = "0.1.18"; // the oldest Herdr Core Pi-Personal is tested with
 export const INSTALLER = "https://releases.herdr.dev/core/install.sh"; // Herdr's own installer
 
 /** a >= b, for versions like 0.1.21. */
@@ -112,7 +115,7 @@ export function atLeast(a: string, b: string): boolean {
 	return true;
 }
 
-/** Herdr Core's command on this machine, and its version: the one set for Pi-personal, the one on the PATH (if it
+/** Herdr Core's command on this machine, and its version: the one set for Pi-Personal, the one on the PATH (if it
  * really is Herdr's: some window managers ship another hc), or where Herdr's installer puts it. */
 export function find(): { bin: string; version: string } | undefined {
 	const local = path.join(os.homedir(), ".local", "bin");
@@ -149,9 +152,26 @@ export function update(): boolean {
 	return spawnSync(bin(), ["update", "--version", MIN_VERSION], { stdio: "inherit" }).status === 0;
 }
 
+const installedMark = () => path.join(home(), "herdr-core-installed");
+/** Herdr Core was installed by Pi-Personal's guide (it was not on this machine before): then Pi-Personal may also
+ * start it when the machine starts. */
+export function markInstalled(): void {
+	try {
+		fs.mkdirSync(home(), { recursive: true, mode: 0o700 });
+		fs.writeFileSync(installedMark(), `${new Date().toISOString()}\n`);
+	} catch {} // not being able to remember it only means Pi-Personal will not start it at boot
+}
+export const installedByUs = () => fs.existsSync(installedMark());
+
 /** Start the selected core; it then runs in the background, whatever happens to this terminal. */
 export function startServer(): void {
 	hc(["server", "start"]);
+}
+/** The same, without blocking: a wait can be drawn meanwhile. */
+export function startServerAsync(): Promise<void> {
+	return new Promise((resolve, reject) =>
+		execFile(bin(), ["server", "start", "--json"], { encoding: "utf8", timeout: 30_000 }, (err, _out, stderr) => (err ? reject(new HerdrError((stderr || err.message).trim(), "start")) : resolve())),
+	);
 }
 
 /** On Linux, whether logging out would stop the user's programs (systemd's "linger" is off). */
@@ -168,8 +188,8 @@ export function server(): { id: string; version: string } {
 }
 
 /** Start a program in a new terminal and return at once. The terminal has no parent, so it outlives whoever ran this. */
-export function run(opts: { name?: string; cwd: string; labels: Record<string, string>; argv: string[] }): Terminal {
-	const args = ["run", "--bg", "--no-parent", "--no-notify", "--cwd", opts.cwd];
+export function run(opts: { name?: string; cwd: string; labels: Record<string, string>; argv: string[]; rm?: boolean }): Terminal {
+	const args = ["run", "--bg", "--no-parent", "--no-notify", "--cwd", opts.cwd, ...(opts.rm ? ["--rm"] : [])];
 	if (opts.name) args.push("--name", opts.name);
 	for (const [k, v] of Object.entries(opts.labels)) args.push("--label", `${k}=${v}`);
 	return hc([...args, "--", ...opts.argv]) as Terminal;

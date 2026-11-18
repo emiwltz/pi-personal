@@ -1,28 +1,43 @@
 #!/usr/bin/env node
 // The command line. Human-readable output by default, JSON with --json where it makes sense.
 import { spawnSync } from "node:child_process";
+import * as os from "node:os";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as agents from "./agents.ts";
 import * as control from "./control.ts";
 import * as herdr from "./herdr.ts";
-import { COMMAND, ENV, PRODUCT } from "./name.ts";
-import { defaultFolderParent, piDir, privateDir, ROOT } from "./paths.ts";
+import { COMMAND, ENV, PRODUCT, SLUG } from "./name.ts";
+import { defaultFolderParent, home, piDir, privateDir, ROOT } from "./paths.ts";
 import * as port from "./port.ts";
 import { channelProgram, checkExtension, checkModel, dryStart, extensionPath, extensionsDir, foundExtensions, lockFile, lockHolder, piCli, piPackage, runForever } from "./runner.ts";
 
 const VERSION = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).version as string;
 
+/** The six commands to know; the rest is for scripts and for later (`help --all`). */
 const HELP = `${PRODUCT} ${VERSION}: your own agent, living in Herdr Core, reachable from anywhere.
 
 Usage: ${COMMAND} [command] [agent] [options]          with one agent, its name can be left out
 
+  ${COMMAND}                 how your agent is doing; Enter opens it (ctrl+\\ comes back)
+  ${COMMAND} setup           set things up, or change them: a channel, the model (safe to run again)
+  ${COMMAND} status          what it and its channels are doing, and why
+  ${COMMAND} doctor          check the installation and every agent, by topic
+  ${COMMAND} update          the newest ${PRODUCT}, with the pi it was tested with
+  ${COMMAND} help --all      every command: chat, send, start, stop, channels, extensions, scripts
+
+Its instructions: AGENTS.md in its folder (~/pi-personal/<name>). Guide: https://github.com/emiwltz/pi-personal`;
+
+const HELP_ALL = `${PRODUCT} ${VERSION}: your own agent, living in Herdr Core, reachable from anywhere.
+
+Usage: ${COMMAND} [command] [agent] [options]          with one agent, its name can be left out
+
 Everyday
-  ${COMMAND}                              how your agent is doing, and what to do next
+  ${COMMAND}                              how your agent is doing; Enter opens it (ctrl+\\ comes back)
   chat [agent]                    talk to it here (Ctrl+D to leave)
   send [agent] "<text>" [--wait]  send one message; --wait prints the answer
-  attach [agent]                  watch it work in its terminal, or take over (ctrl+\\ to leave)
+  attach [agent]                  its own screen: watch it work, or take over (ctrl+\\ to leave)
   status [agent]                  what it and its channels are doing, and why
 
 Manage
@@ -35,7 +50,7 @@ Manage
   channel add|remove [agent] <channel>
                                   turn a channel on or off (Telegram ships with ${PRODUCT})
   channel [agent] <channel> <command...>
-                                  a channel's own commands (Telegram: who, allow <id>, deny <id>, check)
+                                  a channel's own commands (Telegram: who, allow <id>, deny <id>, owner [<id>], check)
   service install|uninstall|status
                                   bring your agents back by themselves (at login and every 5 minutes)
   update                          install the newest ${PRODUCT}, with the pi it was tested with
@@ -58,7 +73,7 @@ Advanced
 Options: --json (machine-readable output), --home <dir> (another private area), -h, --version.`;
 
 const VALUE_OPTIONS = ["model", "id", "timeout", "home", "conversation"];
-const FLAGS = ["json", "wait", "if-running", "purge", "help", "version", "all"];
+const FLAGS = ["skill", "when-idle", "json", "wait", "if-running", "purge", "help", "version", "all"];
 const PASSTHROUGH = ["login", "pi", "channel", "_run"]; // their options belong to the program they run
 
 function parse(argv: string[]) {
@@ -268,6 +283,53 @@ async function send(name: string, text: string, opt: Record<string, string | tru
 	return 0;
 }
 
+/**
+ * Run by an agent on itself (its pi runs this command, in its own terminal): a restart would stop the terminal, this
+ * command with it, halfway, and the agent would stay stopped. True when one of these agents is the one running it.
+ */
+function fromInside(names: string[]): boolean {
+	const mine = process.env[`${ENV}_PORT`];
+	if (!mine) return false;
+	return names.some((n) => {
+		try {
+			return agents.loadRecord(n).paths.port === mine;
+		} catch {
+			return false;
+		}
+	});
+}
+/** The same command again, in a terminal of its own in Herdr Core: stopping the agent's terminal stops everything
+ * started in it, even a detached process, but not another terminal. What it says goes to `log` (the agent's log:
+ * `pp log`); its terminal goes away when it ends. */
+function detached(said: string, log: string): number {
+	const args = process.argv.slice(2);
+	// Herdr Core gives its terminals its own environment: what this command runs with is passed on by hand.
+	const pass = [`PATH=${process.env.PATH ?? ""}`, `${ENV}_HOME=${home()}`, `${ENV}_COMMAND=${COMMAND}`, `${ENV}_HC=${herdr.command()}`, ...(process.env[`${ENV}_SOURCE`] ? [`${ENV}_SOURCE=${process.env[`${ENV}_SOURCE`]}`] : [])];
+	try {
+		herdr.run({ cwd: os.homedir(), labels: { [`${SLUG}.task`]: args[0] }, rm: true, argv: ["sh", "-c", 'exec "$@" >>"$0" 2>&1', log, "env", ...pass, process.execPath, path.join(ROOT, "core", "cli.ts"), ...args, "--when-idle"] });
+	} catch (err) {
+		console.error(`${COMMAND}: could not hand it to Herdr Core: ${(err as Error).message}. Ask your owner to run, in a terminal: ${COMMAND} ${args.join(" ")}`);
+		return 1;
+	}
+	fs.appendFileSync(log, `${new Date().toISOString()} ${COMMAND} ${args.join(" ")}, run by the agent on itself: handed to a terminal of its own, once its answer is done\n`);
+	console.log(said);
+	return 0;
+}
+/** Run by that terminal: wait until the agent's current answer is done (a minute at most), so that the restart cuts
+ * nothing and nobody is told it could not be answered. */
+async function whenIdle(names: string[]): Promise<void> {
+	for (const end = Date.now() + 60_000; Date.now() < end; await new Promise((r) => setTimeout(r, 500))) {
+		const busy = names.some((n) => {
+			try {
+				return control.status(n).state === "working";
+			} catch {
+				return false;
+			}
+		});
+		if (!busy) return;
+	}
+}
+
 async function startCmd(name: string, json: boolean, restart = false): Promise<number> {
 	const r = restart ? await control.restart(name) : await control.start(name);
 	const lines: string[] = [];
@@ -281,11 +343,16 @@ async function startCmd(name: string, json: boolean, restart = false): Promise<n
 		const s = control.status(name);
 		if (s.failed) lines.push(`${name} is FAILED (${s.failed.reason}); next attempt ${s.failed.retryAt}. To try again now: ${COMMAND} restart ${name}`);
 	}
+	// Started in the background: say how to reach it, the one thing a person wants next.
+	if (r.ready !== false && (r.started.includes("agent") || r.running.includes("agent"))) {
+		const who = agents.list().length > 1 ? ` ${name}` : "";
+		lines.push(`  open it: ${COMMAND}    talk to it here: ${COMMAND} chat${who}`);
+	}
 	out(json, r, () => lines.join("\n"));
 	return r.ready === false ? 1 : 0;
 }
 
-/** `update`: the newest Pi-personal from GitHub, through its own installer (downloaded whole before it runs), then
+/** `update`: the newest Pi-Personal from GitHub, through its own installer (downloaded whole before it runs), then
  * the agents that were running are restarted by the new command, with the Node.js it now uses (their conversations
  * continue), and the login service is rewritten to match. PI_PERSONAL_SOURCE (a folder) installs that copy instead. */
 async function update(json: boolean): Promise<number> {
@@ -385,13 +452,21 @@ async function main(argv: string[]): Promise<number> {
 		out(json, { version: VERSION, pi, herdrCore: hc, node: process.versions.node }, () => `${PRODUCT} ${VERSION} (pi ${pi}, Herdr Core ${hc}, Node ${process.versions.node})`);
 		return 0;
 	}
-	if (opt.help || cmd === "help") {
-		console.log(HELP);
+	if (opt.skill) {
+		// The agent's own manual, as hc --skill is Herdr Core's: read before it changes anything about itself.
+		console.log(fs.readFileSync(path.join(ROOT, "docs", "for-agents.md"), "utf8").replaceAll("`pp ", `\`${COMMAND} `));
 		return 0;
 	}
+	if (opt.help || cmd === "help") {
+		console.log(opt.all ? HELP_ALL : HELP);
+		return 0;
+	}
+	// The screens that draw in colour first ask the terminal its background (once, a few milliseconds). Not before
+	// handing the terminal to another program (attach, chat, pi), which would get the answer as keys.
+	if (!json && process.stdin.isTTY && process.stdout.isTTY && [undefined, "setup", "status", "doctor", "update"].includes(cmd)) await (await import("./screen.ts")).sense();
 	if (cmd === undefined) {
-		const { overview } = await import("./welcome.ts");
-		return overview(VERSION);
+		const { home } = await import("./home.ts");
+		return home(VERSION);
 	}
 	switch (cmd) {
 		case "init": {
@@ -439,14 +514,34 @@ async function main(argv: string[]): Promise<number> {
 			if (json) console.log(JSON.stringify(results, null, 2));
 			return code;
 		}
-		case "restart":
-			return startCmd(agentName(a), json, true);
+		case "restart": {
+			const name = agentName(a);
+			if (fromInside([name])) {
+				agents.load(name); // a broken settings file is said now, to the agent, not later in a log
+				return detached(`${name} restarts once this answer is done (a minute at most); the conversation continues after it. What happened: ${COMMAND} log ${name}`, agents.loadRecord(name).paths.log);
+			}
+			if (opt["when-idle"]) await whenIdle([name]);
+			return startCmd(name, json, true);
+		}
 		case "up": {
-			// The login service runs `up --if-running`: it must never be the one that starts the user's Herdr Core
-			// (a core started from a service gets the service's bare environment, and could die with the service).
+			// The login service runs `up --if-running`. It starts Herdr Core only when it may (Pi-Personal installed it, or
+			// the person said yes in pp setup): a core started from a service gets the environment the service was
+			// installed with, and the person's own Herdr Core may run other things of theirs.
 			if (opt["if-running"] && !(await herdr.isRunning())) {
-				console.log("Herdr Core is not running: nothing started (it will be tried again later)");
-				return 0;
+				const { bootStartDue, bootStarted } = await import("./setup.ts");
+				const { due, why } = bootStartDue();
+				if (!due) {
+					console.log(`Herdr Core is not running: nothing started (${why}; it will be tried again later)`);
+					return 0;
+				}
+				try {
+					herdr.startServer();
+					bootStarted();
+					console.log("Herdr Core was not running: started (this machine has just started, or it had stopped)");
+				} catch (err) {
+					console.log(`Herdr Core does not start: ${(err as Error).message} (tried again later)`);
+					return 1;
+				}
 			}
 			const rs = control.upAll();
 			out(json, rs, () =>
@@ -470,8 +565,8 @@ async function main(argv: string[]): Promise<number> {
 			const agent = agents.loadRecord(agentName(a));
 			const t = control.find(agent);
 			if (!t) throw new Error(`${agent.name} is not running: ${COMMAND} start ${agent.name}`);
-			console.error("Leave with ctrl+\\ (Ctrl+D or /quit would quit pi; Pi-personal would start it again).");
-			return spawnSync(process.env[`${ENV}_HC`] || "hc", ["attach", t.address], { stdio: "inherit" }).status ?? 1;
+			console.error("ctrl+\\ leaves this screen; the agent keeps running.");
+			return spawnSync(herdr.command(), ["attach", t.address], { stdio: "inherit" }).status ?? 1;
 		}
 		case "send": {
 			const [name, words] = agentAnd(pos.slice(1));
@@ -509,15 +604,15 @@ async function main(argv: string[]): Promise<number> {
 			const providers = await import("./providers.ts");
 			if (!args.length) {
 				if (!process.stdin.isTTY) throw new UsageError(`usage: ${COMMAND} login (opens pi: /login there), or ${COMMAND} login <provider> [--api-key] [--no-browser]. ${PROVIDERS()}`);
-				console.log("pi opens: /login connects a provider, /model chooses the model (Ctrl+S keeps it as the default), /quit comes back.");
+				console.log("pi opens: /login connects a provider, /model chooses the model (Ctrl+S keeps it as the default), /quit comes back (Ctrl+C and Ctrl+D are off in Pi-Personal's pi).");
 				return providers.openPi();
 			}
 			return providers.login(args);
 		}
 		case "pi": {
-			// Pi-personal's pinned pi, with the settings folder all agents share (packages, MCP servers, models, sign-ins).
+			// Pi-Personal's pinned pi, with the settings folder all agents share (packages, MCP servers, models, sign-ins).
 			const args = argv.slice(argv.indexOf("pi") + 1).filter((x, i, all) => x !== "--home" && all[i - 1] !== "--home" && !x.startsWith("--home="));
-			privateDir(piDir());
+			agents.preparePi();
 			return spawnSync(process.execPath, [piCli(), ...args], { stdio: "inherit", env: { ...process.env, PI_CODING_AGENT_DIR: piDir() } }).status ?? 1;
 		}
 		case "models": {
@@ -614,6 +709,9 @@ async function main(argv: string[]): Promise<number> {
 			return setup(VERSION);
 		}
 		case "update":
+			if (fromInside(agents.list()) && !fs.existsSync(path.join(ROOT, ".installed"))) throw new UsageError(`this ${PRODUCT} runs from a source folder (${ROOT}), not an installed copy: update it with git pull, then ./install.sh`);
+			if (opt["when-idle"]) await whenIdle(agents.list());
+			if (fromInside(agents.list())) return detached("The update runs in a moment, outside this terminal; the agents restart after it, this one included.", agents.loadRecord(agents.list().find((n) => fromInside([n])) as string).paths.log);
 			return update(json);
 		case "doctor":
 		case "service":

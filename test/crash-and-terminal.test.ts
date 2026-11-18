@@ -38,7 +38,7 @@ test("pi killed mid-run comes back with its conversation; pending messages deliv
 	assert.equal(after.filter((e) => e.type === "message" && e.text === "echo: are you back").length, 1);
 	// The cut-off run was resumed first: the bridge's note gets its own turn, linked to k1; the message that
 	// waited comes right after, linked to k2.
-	const noteReply = after.find((e) => e.type === "message" && String(e.text).includes("Pi-personal restarted you"));
+	const noteReply = after.find((e) => e.type === "message" && String(e.text).includes("Pi-Personal restarted you"));
 	assert.ok(noteReply, "the agent was asked to continue");
 	assert.deepEqual(noteReply.refs.map((r: port.Ref) => r.id), ["k1"]);
 	const reply = after.find((e) => e.type === "message" && e.text === "echo: are you back")!;

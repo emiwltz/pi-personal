@@ -1,4 +1,4 @@
-// Contracts: the behaviours of pi and Herdr Core that Pi-personal's core relies on, checked directly. When pi or Herdr Core
+// Contracts: the behaviours of pi and Herdr Core that Pi-Personal's core relies on, checked directly. When pi or Herdr Core
 // is updated, these tests say at once whether an assumption broke, before a user finds out.
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
@@ -123,7 +123,7 @@ test("pi: the session stores a custom message with its details, the bridge's mar
 	assert.equal((await t.cli("send", "main", "remember me", "--id", "c-1", "--wait", "--timeout", "60")).stdout.trim(), "echo: remember me");
 	const sessions = path.join(t.home, "agents", "main", "sessions");
 	const files = (fs.readdirSync(sessions, { recursive: true }) as string[]).filter((f) => f.endsWith(".jsonl"));
-	assert.equal(files.length, 1, "one session file, in Pi-personal's own folder");
+	assert.equal(files.length, 1, "one session file, in Pi-Personal's own folder");
 	const entries = fs.readFileSync(path.join(sessions, files[0]), "utf8").trim().split("\n").map((l) => JSON.parse(l));
 	const ours = entries.find((e) => e.type === "custom_message" && e.customType === "pi-personal.message");
 	assert.equal(ours?.details?.id, "c-1", "the port id travels inside pi's own session");
@@ -140,7 +140,7 @@ test("pi: --continue resumes the same session after a restart", async () => {
 	assert.equal((fs.readdirSync(sessions, { recursive: true }) as string[]).filter((f) => f.endsWith(".jsonl")).length, 1);
 });
 
-test("pi: an MCP server declared in the agent's folder (.pi/mcp.json) reaches the agent under Pi-personal", async () => {
+test("pi: an MCP server declared in the agent's folder (.pi/mcp.json) reaches the agent under Pi-Personal", async () => {
 	const f = path.join(t.dir, "agents", "main");
 	const server = path.join(t.dir, "mcp-probe.mjs");
 	const stamp = path.join(t.dir, "mcp-called");
@@ -169,7 +169,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
 	fs.rmSync(path.join(f, ".pi", "mcp.json"));
 });
 
-test("pi: a pi package declared in the agent's folder (.pi/settings.json) loads under Pi-personal, and safe mode turns it off", async () => {
+test("pi: a pi package declared in the agent's folder (.pi/settings.json) loads under Pi-Personal, and safe mode turns it off", async () => {
 	const f = path.join(t.dir, "agents", "main");
 	const pkg = path.join(t.dir, "probe-package");
 	const loaded = path.join(t.dir, "package-loaded");
@@ -178,7 +178,7 @@ test("pi: a pi package declared in the agent's folder (.pi/settings.json) loads 
 	fs.writeFileSync(path.join(pkg, "extensions", "probe.ts"), `import * as fs from "node:fs";\nfs.appendFileSync(${JSON.stringify(loaded)}, "x");\nexport default function () {}\n`);
 	fs.writeFileSync(path.join(f, ".pi", "settings.json"), JSON.stringify({ packages: [pkg] }));
 	await t.cli("restart", "main");
-	assert.ok(fs.existsSync(loaded), "the package's extension was loaded by pi under Pi-personal");
+	assert.ok(fs.existsSync(loaded), "the package's extension was loaded by pi under Pi-Personal");
 	fs.rmSync(loaded);
 	assert.ok(!fs.existsSync(loaded) && dry(f, ["-ne"]).status === 0 && !fs.existsSync(loaded), "-ne (safe mode) leaves it out");
 	fs.rmSync(path.join(f, ".pi", "settings.json"));

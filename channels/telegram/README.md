@@ -1,6 +1,6 @@
 # The Telegram channel
 
-A Pi-personal channel: it connects one agent to a Telegram bot, by long polling (no public address needed). Everything Telegram does its own way lives here, never in the core: the guest list, formatting, quoting, "typing...", splitting, Telegram's rates.
+A Pi-Personal channel: it connects one agent to a Telegram bot, by long polling (no public address needed). Everything Telegram does its own way lives here, never in the core: the guest list, formatting, quoting, "typing...", splitting, Telegram's rates.
 
 ## Set it up
 
@@ -37,7 +37,7 @@ pp channel telegram allow <your numeric id>
 
 `who` lists the people who wrote to the bot without being allowed at the time, with their numeric Telegram id (they stay in the list after you allow them), then the ids currently allowed. `allow` adds an id to the channel's guest list, kept in the private area (not in the agent's folder); it applies at once, no restart needed. Write to the bot again: the bot shows "typing..." while the agent works, then answers. The message you sent before being allowed was not passed on. If the agent cannot answer (your provider refuses, for example), the bot says so.
 
-**Guests share one agent.** Each message reaches the agent with a line naming who wrote it (their Telegram name and id), and the agent's default instructions tell it to answer that person and keep each person's words to themselves. But it is one agent with one memory: what one guest tells it, it knows when another writes, and a guest can ask it about anything it can reach. Allow only people you would hand a terminal on your machine, and set a spending limit at your model provider: Pi-personal has no budget of its own.
+**Guests share one agent.** Each message reaches the agent with a line naming who wrote it (their Telegram name and id), and the agent's default instructions tell it to answer that person and keep each person's words to themselves. But it is one agent with one memory: what one guest tells it, it knows when another writes, and a guest can ask it about anything it can reach. Allow only people you would hand a terminal on your machine, and set a spending limit at your model provider: Pi-Personal has no budget of its own.
 
 To remove someone: `pp channel telegram deny <id>`.
 
@@ -47,7 +47,7 @@ What the Telegram channel does not do: groups (it answers private chats only), b
 
 `telegram.ts` and its formatter `format.ts`, built on the port alone ([write-a-channel.md](../../docs/write-a-channel.md)): it imports nothing from the core.
 
-- **Deny by default.** Before anything else, the sender's numeric id is checked against the guest list, `$PI_PERSONAL_STATE/allow.json`, re-read at each message. An unlisted sender's message never reaches the port. It is recorded once in `$PI_PERSONAL_STATE/unlisted.jsonl` and logged, so the owner can find their id with `who`. Nobody is ever added automatically. Only private chats are handled. Replies go only to chats on the guest list, even one asked for with `pp send --conversation telegram:<chat>`. Each message starts with `From: <name> (Telegram user <id>, @username) · telegram:<chat>`. If the list cannot be read, nothing is decided: updates stay unconfirmed and replies wait, so nothing is lost.
+- **Deny by default.** Before anything else, the sender's numeric id is checked against the guest list, `$PI_PERSONAL_STATE/allow.json`, re-read at each message. An unlisted sender's message never reaches the port. It is recorded once in `$PI_PERSONAL_STATE/unlisted.jsonl` and logged, so the owner can find their id with `who`. Nobody is ever added automatically. Only private chats are handled. Replies go only to chats on the guest list, even one asked for with `pp send --conversation telegram:<chat>`. Each message starts with `From: "<name>" (Telegram user <id>, @username) · telegram:<chat>`; the name is the one the person chose, in quotes and stripped of quotes and brackets, so it can never pass for what the channel writes. The person who said "that is me" during the setup is the **owner** (`$PI_PERSONAL_STATE/owner`; the first one stays): their messages start with `From: the owner, "<name>" …`, and the agent changes its own settings for the owner only. `pp channel <agent> telegram owner` shows who it is; `owner <id>` (an id on the guest list) changes it. A forwarded message starts with `(Forwarded: written by "<name>", not by the sender.)`, so that it never reads as the request of whoever passed it on. If the list cannot be read, nothing is decided: updates stay unconfirmed and replies wait, so nothing is lost.
 - **One chat, one conversation.** Each message says `conversation: "telegram:<chat id>"`, so the agent never mixes two people's messages in one reply.
 - **Long polling.** `getUpdates` with a 30-second timeout: no public address, works behind a home router. The offset is saved after each update is in the port.
 - **"typing...".** From the moment the agent takes a message in until its run settles (at most 10 minutes), the chat shows that the bot is typing.

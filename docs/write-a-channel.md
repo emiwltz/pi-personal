@@ -1,6 +1,6 @@
 # Write your own channel
 
-A channel connects a messaging service (mail, Matrix, a web page, a sensor) to an agent. It is an ordinary program, in any language, that reads and writes a few files: the [port](port.md). It does not import anything from Pi-personal. If you can read `port.md`, you can write one in an afternoon.
+A channel connects a messaging service (mail, Matrix, a web page, a sensor) to an agent. It is an ordinary program, in any language, that reads and writes a few files: the [port](port.md). It does not import anything from Pi-Personal. If you can read `port.md`, you can write one in an afternoon.
 
 ## What is the core's job, and what is the channel's
 
@@ -15,7 +15,7 @@ The rule: **the core stays the same for every messaging service; everything a se
 
 If a channel needs something the port does not give, change the port for every channel, never the core for one service.
 
-This page walks through the smallest channel, `channels/local/chat.ts` (the one behind `pp chat`), then lists what Pi-personal gives a channel it runs for you, and the rules that keep messages from being lost or repeated.
+This page walks through the smallest channel, `channels/local/chat.ts` (the one behind `pp chat`), then lists what Pi-Personal gives a channel it runs for you, and the rules that keep messages from being lost or repeated.
 
 ## The worked example: `channels/local/chat.ts`
 
@@ -55,7 +55,7 @@ If the file is shorter than the offset, the owner replaced it by hand (while the
 
 That is a complete channel. What it leaves out, because it lives only as long as your terminal session, is what a supervised channel must add: a position saved to disk, identifiers that survive a restart, and `fsync` before the link.
 
-## Running under Pi-personal
+## Running under Pi-Personal
 
 Turn the channel on with `pp channel add <agent> <name> -- <command...>`, or declare it in the agent's `pi-personal.json` yourself, under a name of 1 to 9 characters (`a-z`, `0-9`, `-`, starting with a letter):
 
@@ -89,9 +89,9 @@ It receives these environment variables:
 
 **Secrets.** Read them from `PI_PERSONAL_SECRETS`. Never print them, never write them to the visible folder or to the port.
 
-**Your own commands.** `pp channel [agent] <channel> [args...]` runs your `command` with the extra arguments, exactly as given (options included), and the same environment. Use it for setup commands, like `pp channel telegram allow <id>`. The channel must be declared in `pi-personal.json` and not disabled (`"enabled": false`) for this to work (a channel that ships with Pi-personal works before, so that it can set itself up). If your program answers `check` with one line per check, starting with `ok`, `note` or `FAIL`, `pp channel <channel> check` runs it; `pp doctor` runs `check` only for the channels that ship with Pi-personal, never a program of your own.
+**Your own commands.** `pp channel [agent] <channel> [args...]` runs your `command` with the extra arguments, exactly as given (options included), and the same environment. Use it for setup commands, like `pp channel telegram allow <id>`. The channel must be declared in `pi-personal.json` and not disabled (`"enabled": false`) for this to work (a channel that ships with Pi-Personal works before, so that it can set itself up). If your program answers `check` with one line per check, starting with `ok`, `note` or `FAIL`, `pp channel <channel> check` runs it; `pp doctor` runs `check` only for the channels that ship with Pi-Personal, never a program of your own.
 
-**A guided setup.** A channel that ships with Pi-personal can answer `setup`: an interactive command, in the user's terminal, that asks for what the channel needs (a token, the first person to allow) and exits 0 when the channel can start, 3 when the user skipped it. `pp setup` offers each shipped channel and runs its `setup` before turning it on; the core itself knows no channel by name. Telegram's is the example.
+**A guided setup.** A channel that ships with Pi-Personal can answer `setup`: an interactive command, in the user's terminal, that asks for what the channel needs (a token, the first person to allow) and exits 0 when the channel can start, 3 when the user skipped it. `pp setup` offers each shipped channel and runs its `setup` before turning it on; the core itself knows no channel by name. Telegram's is the example.
 
 **Authorization is yours.** The core lets anything written to the port through. If your service can be reached by other people, decide who may talk to the agent, and deny by default. See [security.md](security.md).
 
@@ -116,7 +116,7 @@ The port guarantees exactly-once from the inbox on. The channel is responsible f
 
 **Recognising your own replies.** Name each conversation `<your channel name>:<the service's own id>` (`telegram:4242`, `mail:alice@example.com`): that is its address. Every `message` event carries `refs`, the messages it answers, each with its `id`, its `conversation` and your `from`, unchanged. Route an answer by the prefix of its `conversation`, and keep in `from` only what you need to shape it (the message to quote, a thread to reply in). All the messages a reply answers belong to one conversation. A program can ask for an answer to go to one of your conversations with `pp send <agent> "..." --conversation <your name>:<id>`: such a message has no `from`. Ignore replies whose `refs` are not yours; a reply to something typed in the agent's terminal has `refs: []`. Events about channels (`started`, `restarted`, `failed`, `stopped` with a `channel` field) are not replies.
 
-**Who is speaking.** The agent sees your `text`, then the list of attachments, and nothing else. If several people can reach the agent through your channel, start the text with a line that says who wrote and where, by convention `From: <name> (<an id the person cannot change>) · <conversation>`, then a blank line; the default instructions tell the agent to answer that person and not to pass one person's words to another, and the conversation lets it send something there later.
+**Who is speaking.** The agent sees your `text`, then the list of attachments, and nothing else. If several people can reach the agent through your channel, start the text with a line that says who wrote and where, by convention `From: "<name>" (<an id the person cannot change>) · <conversation>`, with `the owner, ` before the name for the person who owns the agent, then a blank line (put the name in quotes and strip it of quotes and brackets: a name is chosen by whoever writes, and must never pass for what your channel writes); the default instructions tell the agent to answer that person and not to pass one person's words to another, and the conversation lets it send something there later.
 
 ## The keeper restarts you
 

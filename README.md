@@ -1,8 +1,8 @@
-# Pi-personal
+# Pi-Personal
 
 **A powerful agent, in a capable environment, that you can reach from anywhere.**
 
-Pi-personal gives you your own agent: a [pi](https://github.com/earendil-works/pi) session that lives on your machine, in [Herdr Core](https://herdr.dev), and answers wherever you write to it: its terminal, your shell, Telegram, or any channel you add.
+Pi-Personal gives you your own agent: a [pi](https://github.com/earendil-works/pi) session that lives on your machine, in [Herdr Core](https://herdr.dev), and answers wherever you write to it: its terminal, your shell, Telegram, or any channel you add.
 
 - **Install in one line.** The guide sets up everything else: Herdr Core (yours, if you have one), a model with pi's own `/login` and `/model` (any provider pi supports), your agent, Telegram.
 - **Always there.** It runs in the background, comes back by itself after a crash, and continues the work that was cut off.
@@ -16,27 +16,29 @@ curl -fsSL https://raw.githubusercontent.com/emiwltz/pi-personal/main/install.sh
 Linux or macOS. The installer brings Node.js if it is missing, changes nothing else on the machine without asking, and ends in the guide, which uses your Herdr Core or installs one (asking first), for example:
 
 ```
-2/4  A model, with pi
-  pi opens here, as it always does. In pi:
-    /login   connect a provider: an account (a subscription) or an API key
-    /model   choose the model; Ctrl+S there keeps it as the default
-    /quit    come back here
-…
-3/4  Your agent
-  ✔ main created in ~/pi-personal/main, with anthropic/claude-opus-5-5
-  ✔ main runs in Herdr Core, in the background: closing this window does not stop it
-  main › Hello! I'm main, your agent on this machine. What shall we start with?
+  ◆  A model  2/5
+  │  ? Which provider? (type to search, ↑ ↓, Enter)
+  │    Anthropic  your subscription or an API key
+  │  ✔ Anthropic: connected
+  │  ✔ the model: anthropic/claude-opus-5-5
+  ◇  Anthropic · claude-opus-5-5
+
+  ◆  Your agent  3/5
+  │  ✔ main created in ~/pi-personal/main, with anthropic/claude-opus-5-5
+  │  ! main is pi, the coding agent, with everything your account can do on this machine: there is no sandbox.
+  │  ✦ main is alive.
+  │  main › Hello! I'm main, your agent on this machine. What shall we start with?
+  ◇  main is alive, and answered
 ```
 
 Then:
 
 ```sh
-pp            # how your agent is doing, and what to do next
+pp            # how your agent is doing; Enter opens its screen, ctrl+\ comes back
 pp chat       # talk to it here
-pp attach     # watch it work in its terminal, or take over (ctrl+\ to leave)
 ```
 
-Pi-personal is an independent project built on pi. It is not a sandbox: your agent can do anything your user account can do, as pi can ([security](docs/security.md)).
+Pi-Personal is an independent project built on pi. It is not a sandbox: your agent can do anything your user account can do, as pi can ([security](docs/security.md)).
 
 ## How it works
 
@@ -74,16 +76,16 @@ Everything a messaging service does its own way (formatting, groups, voice, reac
 
 - [The guide](docs/guide.md): install, setup, everyday use, channels, starting at login, updates, backups, uninstalling.
 - [Concepts](docs/concepts.md): agent, folder, session, keeper, port, bridge, channels, extensions.
-- [Security](docs/security.md): what Pi-personal trusts, and what can go wrong. Read it before you let anyone else talk to your agent.
+- [Security](docs/security.md): what Pi-Personal trusts, and what can go wrong. Read it before you let anyone else talk to your agent.
 - [The Telegram channel](channels/telegram/README.md), and [how to write your own](docs/write-a-channel.md) for another service, in any language.
 - [The port](docs/port.md): the protocol, for anyone writing a client.
 - [A map of the code](docs/code.md), and the [decisions](docs/decisions/) behind the design.
 
 ## Project status
 
-Version 0.3, early. Tested on Linux (arm64) and macOS (arm64), with pi 1.5.2, Herdr Core 0.1.18 to 0.1.21, and Node.js 22 and 24; installed from scratch on a simulated fresh machine on both. Used for real with a hosted model and the Telegram channel. Not yet proven: weeks of continuous use, a power cut, a real fresh machine of every kind.
+Version 0.4, early. Tested on Linux (arm64) and macOS (arm64), with pi 1.5.2, Herdr Core 0.1.18 to 0.1.21, and Node.js 22 and 24; installed from scratch on a simulated fresh machine on both. Used for real with a hosted model and the Telegram channel. Not yet proven: weeks of continuous use, a power cut, a real fresh machine of every kind.
 
-Pi-personal follows pi: a new pi version is adopted once the tests pass with it (`test/contracts.test.ts` says first which of pi's behaviours changed), and `pp update` brings it.
+Pi-Personal follows pi: a new pi version is adopted once the tests pass with it (`test/contracts.test.ts` says first which of pi's behaviours changed), and `pp update` brings it.
 
 ## Development
 
