@@ -1,14 +1,15 @@
-// Start, stop and inspect agents and their channels in Herdr Core. Pi-Personal only ever touches terminals it
+// Start, stop and inspect agents and their channels in Herdr Core, and restart an agent's terminal alone to apply a
+// change (a new conversation, a model, a thinking level). Pi-Personal only ever touches terminals it
 // created: it finds them by the labels it set (the agent, the private area it belongs to, the channel or the
 // agent role), never by guessing.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { type Agent, type AgentRecord, channels, labels, preparePi, list, load, loadRecord, ownLabels, readSettings, type Settings, terminalName } from "./agents.ts";
+import { type Agent, type AgentRecord, channels, editSettings, labels, preparePi, list, load, loadRecord, ownLabels, readSettings, type Settings, terminalName } from "./agents.ts";
 import * as herdr from "./herdr.ts";
 import { COMMAND, ENV, SLUG } from "./name.ts";
 import { home, ROOT } from "./paths.ts";
 import * as port from "./port.ts";
-import { lockFile, lockHolder, readKeeper, writeKeeper } from "./runner.ts";
+import { lockFile, lockHolder, newSession, readKeeper, writeKeeper } from "./runner.ts";
 
 /** The keeper's log: every action it takes, in plain text. */
 export function note(agent: AgentRecord, text: string): void {
@@ -192,21 +193,28 @@ export async function stop(name: string): Promise<string[]> {
 	if (holder && !mine.some((t) => t.pid === holder.pid))
 		throw new Error(`${name} runs in another terminal or Herdr Core (runner pid ${holder.pid}): stop it from there`);
 	fs.writeFileSync(agent.paths.stopped, `${new Date().toISOString()}\n`);
+	const ended = await end(agent, mine, (ch) => (ch ? { type: "stopped", channel: ch } : { type: "stopped" }));
+	if (ended.length) note(agent, `stopped ${ended.join(", ")} (it stays stopped until started again)`);
+	return ended;
+}
+
+/** End these terminals, recording `said` for each, and return once they have ended (15 s at most), so that a start right
+ * after finds their names free. */
+async function end(agent: AgentRecord, terminals: herdr.Terminal[], said: (channel?: string) => port.PortEvent): Promise<string[]> {
 	const ended: string[] = [];
-	for (const t of mine) {
+	for (const t of terminals) {
 		try {
 			herdr.kill(t.address);
 		} catch (err) {
 			if (herdr.get(t.address)?.state === "live") throw err; // it ended meanwhile: that is what was wanted
 		}
 		const ch = t.labels?.[`${SLUG}.channel`];
-		fact(agent, ch ? { type: "stopped", channel: ch } : { type: "stopped" });
+		fact(agent, said(ch));
 		ended.push(ch ?? "agent");
 	}
 	const until = Date.now() + 15_000;
-	while (Date.now() < until && mine.some((t) => herdr.get(t.address)?.state === "live")) await new Promise((r) => setTimeout(r, 200));
-	for (const t of mine) herdr.rm(t.address);
-	if (ended.length) note(agent, `stopped ${ended.join(", ")} (it stays stopped until started again)`);
+	while (Date.now() < until && terminals.some((t) => herdr.get(t.address)?.state === "live")) await new Promise((r) => setTimeout(r, 200));
+	for (const t of terminals) herdr.rm(t.address);
 	return ended;
 }
 
@@ -219,6 +227,68 @@ export async function restart(name: string) {
 	}
 	await stop(name);
 	return start(name);
+}
+
+const NEW_CONVERSATION = "a new conversation was started before this message was answered";
+
+/**
+ * Restart the agent's terminal only, after `change`: its channels keep running. Used by "new", "model", "thinking" and
+ * pp setup's change of model. Refuses, changing nothing, a settings file that cannot be read and an agent whose runner
+ * runs elsewhere. Stopped on purpose, it only writes the change: it applies at the next start.
+ * `fresh`, a new conversation: the open work is closed by the path of a stop on purpose (the stopped mark, written
+ * before the terminal ends, also keeps "up" from starting it meanwhile), and what pi could not close (it was down or
+ * hung) is closed here; then the agent gets a new session id. Otherwise the terminal ends without the mark: a run in
+ * progress is cut, and resumed by the next start, which reads the change.
+ */
+export async function restartAgent(name: string, why: string, change: (agent: Agent) => void, fresh = false) {
+	let agent: Agent;
+	try {
+		agent = load(name);
+	} catch (err) {
+		throw new Error(`${(err as Error).message}; nothing was changed: fix it, then try again`);
+	}
+	const t = find(agent);
+	const holder = lockHolder(lockFile(agent));
+	if (holder && t?.pid !== holder.pid) throw new Error(`${name} runs in another terminal or Herdr Core (runner pid ${holder.pid}): do it from there`);
+	const stopped = fs.existsSync(agent.paths.stopped);
+	change(agent);
+	const mark = `${new Date().toISOString()}\n`;
+	if (fresh && !stopped) fs.writeFileSync(agent.paths.stopped, mark);
+	if (t) await end(agent, [t], () => ({ type: "restarted", reason: why }));
+	let told = 0;
+	if (fresh) {
+		told = settleOpen(agent);
+		newSession(agent);
+	}
+	// A stop that came while the terminal was ending (its mark, not this one) is the last thing asked: start would undo it.
+	let now: string | undefined;
+	try {
+		now = fs.readFileSync(agent.paths.stopped, "utf8");
+	} catch {}
+	const later = stopped || (now !== undefined && !(fresh && now === mark));
+	note(agent, `${why}${later ? "; it is stopped: this applies at its next start" : t ? "; restarting the agent's terminal" : ""}`);
+	if (later) return { later: true as const, told };
+	return { later: false as const, told, ...(await start(name)) };
+}
+
+/** A setting pi is started with (`model`, `thinking`), written, then the agent's terminal restarted to apply it. */
+export const setting = (name: string, key: "model" | "thinking", value: string) =>
+	restartAgent(name, `${key} set to ${value}`, (a) =>
+		editSettings(a.folder, (s) => {
+			s[key] = value;
+		}),
+	);
+
+/** Every message taken in that has no settled after its taken, said now: a new conversation will never answer them. */
+function settleOpen(agent: AgentRecord): number {
+	const open = new Map<string, port.Ref[]>();
+	for (const e of port.events(agent.paths.port).events) {
+		if (e.channel) continue;
+		if (e.type === "taken" && typeof e.id === "string") open.set(e.id, (e.refs as port.Ref[] | undefined) ?? [{ id: e.id }]);
+		if (e.type === "settled") for (const r of (e.refs as port.Ref[] | undefined) ?? []) open.delete(r.id);
+	}
+	for (const refs of open.values()) fact(agent, { type: "settled", refs, error: NEW_CONVERSATION });
+	return open.size;
 }
 
 /** Remove our own finished terminals, so they do not pile up in Herdr; return why each ended, by channel ("" = agent). */

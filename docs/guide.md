@@ -37,7 +37,7 @@ It ends on what to do first: `pp`, where Enter opens your agent.
 
 **The first meeting.** A new agent's instructions (`AGENTS.md`) have a section "First meeting": in its hello, the agent says who it is, how you reach it and what you can still set, then asks what to call you and what you do. It writes what it learns in "About my person", at the end of the same file, and keeps it up to date. Edit or empty that section as you like.
 
-**Settings, by asking.** You can ask your agent to change its own settings (a channel, its model, its extensions, its instructions). It reads its manual first (`pp --skill`, the same text as [for-agents.md](for-agents.md)), and its rules: it does this for its owner only (you, from this machine, or the person who said "that is me" in the Telegram setup: their messages are marked `From: the owner,` by the channel, which no one else can imitate); it never takes a secret in a conversation (tokens and keys are typed in a terminal: `pp setup`, `pp login`); it says what it will change and waits for your yes. A restart it runs on itself happens in a terminal of its own in Herdr Core, so it comes back; what it said is in `pp log`.
+**Settings, by asking.** You can ask your agent to change its own settings (a channel, its model, its extensions, its instructions). It reads its manual first (`pp --skill`, the same text as [for-agents.md](for-agents.md)), and its rules: it does this for its owner only (you, typing in its screen or in `pp chat`, or the person who said "that is me" in the Telegram setup: their messages reach it under a line `From: the owner`, written by Pi-Personal itself, which nothing in a message can imitate); it never takes a secret in a conversation (tokens and keys are typed in a terminal: `pp setup`, `pp login`, or given with the channel's own command, which never passes them to the agent: on Telegram, `/login` and `/secret`); it says what it will change and waits for your yes. A restart it runs on itself happens in a terminal of its own in Herdr Core, so it comes back; what it said is in `pp log`.
 
 `pp login` opens pi's screen again, for `/login` (and `/model`), at any time; `pp login <provider> [--api-key]` is pi's command-line sign-in.
 
@@ -51,7 +51,7 @@ pp attach                        # straight to its own screen; ctrl+\ to leave
 
 With one agent, commands need no name; with several, name it: `pp attach work`.
 
-`pp` in a terminal is a small full screen (your terminal comes back as it was when you leave): your agent and how it is (a star beside its name when it is alive; amber when it waits for you, red when it cannot start), what Enter does, `s` for the full status, `q` or Esc to leave. With several agents, a card each, chosen with the arrows (or `j` and `k`). Enter on an agent that is not running starts it (and Herdr Core if needed) and opens it. In a script, `pp` prints the same in plain text, with the next thing to do.
+`pp` in a terminal is a small full screen (your terminal comes back as it was when you leave): your agent and how it is (a star beside its name when it is alive; amber when it waits for you, red when it cannot start), then a menu: open it, its status, its model and thinking (chosen from lists), a new conversation, restart it, its log, set up (channels, model, agents), check everything, update, quit. ↑↓ (or `j` and `k`) and Enter, or the letter shown beside each line; Esc leaves. With several agents, ←→ (or Tab) chooses the one the menu is for. Enter on an agent that is not running starts it (and Herdr Core if needed) and opens it. In a script, `pp` prints the same in plain text, with the next thing to do.
 
 The agent's own screen is pi itself, with everything pi offers; typed messages and messages from channels coexist. `ctrl+\` leaves it, and the agent keeps running. There, Ctrl+C and Ctrl+D do not quit pi, and Ctrl+Z does not freeze it: Pi-Personal turns them off in its own pi settings (`keybindings.json` in its private area, written once; change it as you like, it stays yours). Escape still stops what pi is doing. If you quit pi with `/quit`, Pi-Personal starts it again; to stop the agent, use `pp stop`.
 
@@ -64,7 +64,7 @@ Its instructions are in `~/pi-personal/<name>/AGENTS.md`: edit them like any fil
 }
 ```
 
-After changing the model or the extensions: `pp restart`.
+To change the model: `pp model <provider/id>` (it restarts the agent, and its work goes on). After changing the extensions: `pp restart`. A fresh conversation: `pp new`.
 
 ## Channels
 
@@ -77,9 +77,11 @@ A channel is a small program, next to the agent, that connects it to a messaging
 | `pp channel [agent] telegram allow <id>` | let them talk to your agent |
 | `pp channel [agent] telegram owner [<id>]` | who the owner is there (set by the setup: the person who said "that is me"); with an id on the guest list, make them the owner |
 
+**From your phone.** The owner pilots the agent from Telegram, in their private chat with the bot: `/stop` (stop what it is doing), `/new`, `/model`, `/thinking`, `/status`, `/restart`, `/login <provider> <key>` and `/secret <name> <value>` (the message is deleted at once; the value reaches neither the agent nor its conversation, but it did go through Telegram), `/kit`, `/help`. Nobody else can: the same words from a guest are refused. Another channel does the same through `pp remote <agent> -- <command>` ([write-a-channel.md](write-a-channel.md)).
+
 ## Extensions
 
-Your agent is pi: it loads pi's extensions from its folder's `.pi/extensions/`, and pi packages, skills, prompt templates and MCP servers the way pi does ([concepts.md](concepts.md#extensions)). `pp ext check` says whether pi loads them; `pp pi <args>` runs Pi-Personal's own pi with the settings all agents share (to install a package, for example). An extension that breaks pi's loading puts the agent in safe mode (running without its extensions) instead of stopping it; `pp` and `pp status` say which and why.
+Your agent is pi: it loads pi's extensions from its folder's `.pi/extensions/`, and pi packages, skills, prompt templates and MCP servers the way pi does ([concepts.md](concepts.md#extensions)). `pp ext check` says whether pi loads them; `pp pi <args>` runs Pi-Personal's own pi with the settings all agents share (to install a package, for example). An extension that breaks pi's loading puts the agent in safe mode (that extension off, the others on; pi's packages and built-in extensions off too) instead of stopping it; `pp` and `pp status` say which and why.
 
 ## Start, stop, and start at login
 
@@ -87,6 +89,8 @@ Your agent is pi: it loads pi's extensions from its folder's `.pi/extensions/`, 
 |---|---|
 | `pp start` / `pp stop` / `pp restart` | the agent and its channels; a stopped agent stays stopped until you start it |
 | `pp stop --all` | every agent, then Herdr Core itself, unless it also runs programs of yours |
+| `pp interrupt` | stop what the agent is doing now, as Escape does in its screen; messages waiting keep their turn |
+| `pp answer "<text>"` | answer the question the agent asks you (an extension's approval or choice), as you would in its screen |
 | `pp start --all` | every agent again |
 
 **After a restart of the machine.** With the login service, your agent comes back by itself when Herdr Core may be started by it: always when Pi-Personal installed Herdr Core (nothing else of yours runs there), and when you said yes to it in `pp setup` (step 5, or "Coming back by itself" in its menu) for a Herdr Core of your own. Otherwise run `pp start` (or `pp start --all`) once; your agents come back, conversations included.
@@ -101,7 +105,7 @@ Your agent is pi: it loads pi's extensions from its folder's `.pi/extensions/`, 
 - `pp status` gives the details: state, last error, last restart and why, safe mode, each channel.
 - `pp log` is the keeper's log: every start, exit and restart, and why.
 - `pp doctor` checks the installation and every agent, by topic (this machine, Herdr Core, coming back by itself, each agent), one line each: `ok`, `note`, or `FAIL` with what to do.
-- "… refused the credentials": the provider does not accept the key or the sign-in (wrong, revoked or expired). `pp login` enters new ones; a running agent uses them from its next message, no restart needed.
+- "… refused the credentials": the provider does not accept the key or the sign-in (wrong, revoked or expired). `pp login` enters new ones (or, from Telegram, `/login <provider> <key>`); a running agent uses them from its next message, no restart needed.
 - `pp follow` prints everything the agent says and does, as it happens.
 
 The agent comes back by itself after a crash, and continues the work that was cut off. After repeated failures it stops trying, says why, and tries again every hour; `pp restart` tries now.
@@ -112,7 +116,7 @@ The agent comes back by itself after a crash, and continues the work that was cu
 pp update
 ```
 
-It runs the installer again (the newest Pi-Personal, with the pi version it was tested with), then restarts the agents that were running; their conversations continue. `pp --version` shows what you have.
+It runs the installer again (the newest Pi-Personal, with the pi version it was tested with), then restarts the agents that were running; their conversations continue. `pp --version` shows what you have. From 0.4, read first what changes for an agent it made (its `AGENTS.md` is not rewritten): [decision 0004](decisions/0004-what-the-core-carries.md#upgrading-from-04).
 
 ## Where things live
 
@@ -148,4 +152,4 @@ Your agents' visible folders are never touched. The `PATH` line the installer ad
 
 ## Every command
 
-`pp help` lists the six to know; `pp help --all` lists them all, in three groups: everyday, manage, advanced. `init`, `status`, `start`, `up`, `stop`, `restart`, `send`, `follow`, `ext check`, `update` and `doctor` print JSON with `--json`.
+`pp help` lists the six to know; `pp help --all` lists them all, in three groups: everyday, manage, advanced. `init`, `status`, `start`, `up`, `stop`, `restart`, `send`, `interrupt`, `answer`, `follow`, `ext check`, `update` and `doctor` print JSON with `--json`.

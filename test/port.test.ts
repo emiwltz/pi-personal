@@ -40,6 +40,52 @@ test("invalid messages are refused before they reach the inbox", () => {
 	assert.equal(port.submit(p, { id: "x", text: "a", conversation: "telegram:42" }), "accepted");
 });
 
+test("a control message: text empty, control a word of at most 32 characters; question, answer, wake and note of their types", () => {
+	const p = path.join(tmp(), "port");
+	assert.equal(port.submit(p, { id: "c1", text: "", control: "interrupt" }), "accepted", "empty text only with a control word");
+	assert.equal(port.submit(p, { id: "c2", text: "", control: "c".repeat(32), sender: { owner: true }, attachments: [] }), "accepted");
+	// An older core would take an empty text with attachments for a message to the model.
+	assert.throws(() => port.submit(p, { id: "c", text: "", control: "interrupt", attachments: ["/x"] }), /attachments are not allowed on a control message/);
+	assert.throws(() => port.submit(p, { id: "c", text: "stop", control: "interrupt" }), /text must be empty on a control message/);
+	for (const control of ["", "c".repeat(33), 7, true]) assert.throws(() => port.submit(p, { id: "c", text: "", control: control as never }), /control must be a string of 1 to 32 characters/);
+	assert.throws(() => port.submit(p, { id: "c", text: "", control: "answer", question: "q".repeat(129) }), /question must be a string of at most 128/);
+	assert.throws(() => port.submit(p, { id: "c", text: "", control: "answer", answer: 4 as never }), /answer must be a string of at most 4000/);
+	assert.throws(() => port.submit(p, { id: "c", text: "", control: "answer", answer: "a".repeat(4001) }), /answer must be a string of at most 4000/);
+	assert.throws(() => port.submit(p, { id: "c", text: "a", wake: "no" as never }), /wake must be a boolean/);
+	assert.throws(() => port.submit(p, { id: "c", text: "a", note: 1 as never }), /note must be a string/);
+	assert.equal(port.submit(p, { id: "c3", text: "", control: "answer", question: "q1", answer: "a".repeat(4000) }), "accepted");
+	// Withdrawing: a message still waiting goes; one already taken stays where it is.
+	assert.equal(port.withdraw(p, "c1"), true);
+	assert.equal(fs.existsSync(path.join(p, "inbox", "c1.json")), false);
+	port.take(p, "c2");
+	assert.equal(port.withdraw(p, "c2"), false);
+	assert.equal(port.isTaken(p, "c2"), true);
+});
+
+test("a message told without waking must be said somewhere or keep something: wake false, no conversation and an empty note is refused", () => {
+	const p = path.join(tmp(), "port");
+	assert.throws(() => port.submit(p, { id: "w", text: "a", wake: false, note: "" }), /wake false and no conversation must keep something/);
+	assert.throws(() => port.submit(p, { id: "w", text: "a", wake: false, note: "", conversation: "" }), /wake false and no conversation must keep something/);
+	assert.equal(port.submit(p, { id: "w1", text: "a", wake: false, note: "", conversation: "telegram:1" }), "accepted", "only said");
+	assert.equal(port.submit(p, { id: "w2", text: "a", wake: false }), "accepted", "only kept");
+	assert.equal(port.submit(p, { id: "w3", text: "a", wake: true, note: "" }), "accepted", "a note means nothing when it wakes");
+});
+
+test("who wrote: a sender that is not an object, a name or an id that is not a string, an owner that is not a boolean are refused; length never is", () => {
+	const p = path.join(tmp(), "port");
+	for (const sender of ["Emi", ["Emi"], null, 7]) assert.throws(() => port.submit(p, { id: "s", text: "a", sender: sender as never }), /sender must be an object/);
+	assert.throws(() => port.submit(p, { id: "s", text: "a", sender: { name: 7 } as never }), /sender\.name must be a string/);
+	assert.throws(() => port.submit(p, { id: "s", text: "a", sender: { id: 4242 } as never }), /sender\.id must be a string/);
+	assert.throws(() => port.submit(p, { id: "s", text: "a", sender: { owner: "true" } as never }), /sender\.owner must be a boolean/);
+	assert.equal(port.submit(p, { id: "s", text: "a", sender: { name: "N".repeat(5000), id: "i".repeat(5000), owner: true } }), "accepted");
+	assert.equal(port.submit(p, { id: "s2", text: "a", sender: {} }), "accepted", "a channel that knows nothing of who wrote");
+	// The same judgement for a file a channel wrote itself: set aside, never shown to the agent as somebody's.
+	const f = path.join(p, "inbox", "s3.json");
+	fs.writeFileSync(f, JSON.stringify({ id: "s3", text: "a", sender: { owner: 1 } }));
+	old(f);
+	assert.deepEqual(port.read(port.pending(p).find((x) => x.id === "s3")!), { reason: "sender.owner must be a boolean" });
+});
+
 test("pending keeps the order of writing; a broken file waits while young, then is set aside, and its id stays free", async () => {
 	const p = path.join(tmp(), "port");
 	for (const id of ["z", "b", "m"]) {

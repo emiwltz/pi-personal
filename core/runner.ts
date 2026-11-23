@@ -1,15 +1,18 @@
 // The runner: lives in a Pi-Personal terminal of Herdr Core, runs one program (an agent's pi, or a channel),
 // and brings it back when it ends. It keeps the restart rules (docs/decisions/0002-keeper.md):
-// backoff, give up after 5 quick failures, try again every hour, safe mode for in-agent extensions.
+// backoff, give up after 5 quick failures, try again every hour, safe mode for in-agent extensions (the failing ones
+// off, the others kept on once a check shows they load; the bridge alone as the floor).
 // What it knows (ready, safe mode, failed, last restart) it keeps in keeper.json, which "pp status" reads.
+// It starts pi on the agent's own session, by its id (the `session` file), never on pi's newest one.
 import { spawn, spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { type Agent, type AgentRecord, channels, load } from "./agents.ts";
 import { ENV, SETTINGS_FILE } from "./name.ts";
-import { piDir, ROOT, writeWhole } from "./paths.ts";
+import { below, home, piDir, privateDir, ROOT, writeWhole } from "./paths.ts";
 import * as port from "./port.ts";
 
 const LIMIT = 5; // failed starts...
@@ -17,7 +20,7 @@ const WINDOW_MS = Number(process.env[`${ENV}_WINDOW_MS`] ?? 10 * 60_000); // ...
 const RETRY_MS = Number(process.env[`${ENV}_RETRY_MS`] ?? 60 * 60_000); // then one attempt per hour
 const STARTUP_MS = Number(process.env[`${ENV}_STARTUP_MS`] ?? 120_000); // pi must reach the port within this time
 const BACKOFF_MS = [500, 1000, 2000, 4000, 8000];
-const KEEP_DAYS = 30; // taken/ and rejected/ files older than this are removed (the session still knows the ids)
+const KEEP_DAYS = 30; // taken/ and rejected/ files older than this are removed (the session still knows the ids, unless pp new started another)
 
 /** The folder of the pi package Pi-Personal pins (never the user's own `pi`). */
 export function piPackage(): { dir: string; version: string; bin: string } {
@@ -41,14 +44,25 @@ export function piCli(): string {
 	return path.join(p.dir, p.bin);
 }
 
-/** The environment pi runs with: Pi-Personal's shared pi configuration, this agent's own conversation logs. */
-function piEnv(agent: Agent): NodeJS.ProcessEnv {
+/**
+ * The environment pi runs with: Pi-Personal's shared pi configuration, this agent's own conversation logs, and what
+ * an in-agent extension is given (docs/port.md). One function for a real start and for every load check, which gets
+ * the same values except a throwaway port: a check judges an extension as a real start would.
+ */
+function piEnv(agent: Agent, portDir = agent.paths.port): NodeJS.ProcessEnv {
+	try {
+		privateDir(agent.paths.extensions); // an extension may write its state while it loads
+	} catch {} // a folder that cannot be made is that extension's trouble, said by pi; never the runner's
 	return {
 		...process.env,
 		PI_CODING_AGENT_DIR: piDir(),
 		PI_CODING_AGENT_SESSION_DIR: agent.paths.sessions,
 		PI_SKIP_VERSION_CHECK: "1", // Pi-Personal pins pi; updating it is Pi-Personal's job
 		PI_TELEMETRY: "0",
+		[`${ENV}_PORT`]: portDir,
+		[`${ENV}_AGENT`]: agent.name,
+		[`${ENV}_SECRETS`]: agent.paths.secrets,
+		[`${ENV}_STATE`]: agent.paths.extensions,
 	};
 }
 
@@ -71,40 +85,31 @@ export function foundExtensions(agent: AgentRecord): string[] {
 
 /**
  * Start pi once without a model, a session or a screen, ask it for its state, and see whether it answers: a positive
- * sign that it got through loading. With `only`, it loads that one extension alone; with `all`, everything it finds for
- * this agent (.pi/extensions, packages, MCP servers); otherwise nothing but pi (`-ne`). `failing` lists the extensions
+ * sign that it got through loading. With `only`, it loads those extensions alone (none: nothing but pi, `-ne`); with
+ * `all`, everything it finds for this agent (.pi/extensions, packages, MCP servers). `failing` lists the extensions
  * pi names as failing to load (by folder name when they are in .pi/extensions).
  */
-export function dryStart(agent: Agent, what: { all: true } | { only: string } | { none: true }): { ok: boolean; failing: string[]; error: string } {
+export function dryStart(agent: Agent, what: { all: true } | { only: string[] }): { ok: boolean; failing: string[]; error: string } {
 	if (!fs.existsSync(agent.folder)) return { ok: false, failing: [], error: `the agent's folder ${agent.folder} is missing` };
 	const args = [piCli()]; // the bridge is left out: it is Pi-Personal's own and always loads
-	if ("only" in what) args.push("-ne", "-e", path.isAbsolute(what.only) ? what.only : extensionPath(agent, what.only));
-	else if ("none" in what) args.push("-ne");
+	if ("only" in what) args.push("-ne", ...only(agent, what.only));
 	if (agent.settings.model) args.push("--model", agent.settings.model); // pi checks the model while loading
-	// In-agent extensions run with PI_PERSONAL_PORT (docs/port.md): give the check a throwaway port of its own.
+	// The check must not write into the agent's port: it gets a throwaway one.
 	const scratch = fs.mkdtempSync(path.join(os.tmpdir(), "pi-personal-check-"));
-	const r = probe([...args, "--no-session"], agent.folder, { ...piEnv(agent), PI_OFFLINE: "1", [`${ENV}_PORT`]: path.join(scratch, "port") });
+	const r = probe([...args, "--no-session"], agent.folder, { ...piEnv(agent, path.join(scratch, "port")), PI_OFFLINE: "1" });
 	fs.rmSync(scratch, { recursive: true, force: true });
 	const out = `${r.stderr ?? ""}${r.stdout ?? ""}`;
 	const answered = r.answered && /"success"\s*:\s*true/.test(r.stdout ?? "");
 	const named = [...out.matchAll(/Failed to load extension "([^"]+)"/g)].map((m) => m[1]);
-	// pi names a failing extension by its real path (on macOS /tmp is /private/tmp): compare real paths.
-	const real = (p: string) => {
-		try {
-			return fs.realpathSync(p);
-		} catch {
-			return path.resolve(p);
-		}
-	};
-	const base = real(extensionsDir(agent));
-	const nameOf = (p: string) => {
-		const rel = path.relative(base, real(path.resolve(agent.folder, p)));
-		return rel && !rel.startsWith("..") && !path.isAbsolute(rel) ? rel.split(path.sep)[0] : p;
-	};
+	// pi names a failing extension by its real path: compare real paths.
+	const nameOf = (p: string) => below(extensionsDir(agent), path.resolve(agent.folder, p))?.[0] ?? p;
 	const failing = [...new Set(named.map(nameOf))];
 	const error = answered ? "" : (out.split("\n").find((l) => /error|fail/i.test(l)) ?? (r.error ? "it did not answer in time" : `it stopped (exit code ${r.status ?? r.signal}) without answering`)).trim().slice(0, 500);
 	return { ok: answered, failing, error };
 }
+
+/** pi's arguments that load these extensions, by name in .pi/extensions or by absolute path (with `-ne`, nothing else). */
+const only = (agent: AgentRecord, names: string[]) => names.flatMap((e) => ["-e", path.isAbsolute(e) ? e : extensionPath(agent, e)]);
 
 /** pi started in RPC mode and asked for its state, then closed: does it load, and what did it say? */
 function probe(args: string[], cwd: string, env: NodeJS.ProcessEnv) {
@@ -135,7 +140,7 @@ export function checkModel(model: string, cwd: string): { ok: boolean; warning?:
 /** Does this in-agent extension load? Starts pi with it alone, without a model, a session or a screen. */
 export function checkExtension(agent: Agent, name: string): { ok: true } | { ok: false; error: string } {
 	if (!fs.existsSync(extensionPath(agent, name))) return { ok: false, error: `${extensionPath(agent, name)} does not exist` };
-	const r = dryStart(agent, { only: name });
+	const r = dryStart(agent, { only: [name] });
 	return r.ok ? { ok: true } : { ok: false, error: r.error };
 }
 
@@ -149,10 +154,63 @@ function startFailure(agent: Agent): { extensions: boolean; broken: string[]; ca
 	if (full.ok) return { extensions: false, broken: [] }; // it loads here: the cause shows only in a real start
 	if (full.failing.length) return { extensions: true, broken: full.failing };
 	// pi stops or hangs while loading without naming anything: if it starts with no extension at all, one of them is the cause.
-	const bare = dryStart(agent, { none: true });
+	const bare = dryStart(agent, { only: [] });
 	if (!bare.ok) return { extensions: false, broken: [], cause: bare.error || full.error };
 	// Which one? Try each of the folder's extensions alone.
-	return { extensions: true, broken: foundExtensions(agent).filter((e) => !dryStart(agent, { only: e }).ok) };
+	return { extensions: true, broken: foundExtensions(agent).filter((e) => !dryStart(agent, { only: [e] }).ok) };
+}
+
+/** Safe mode: the entries of .pi/extensions kept `on`, those `off`, the failing ones and why (`cause`, then the whole
+ * `reason`). `floor`: the bridge alone, until everything loads again, and why it was taken (null off the floor). */
+interface Safe {
+	on: string[];
+	off: string[];
+	broken: string[];
+	cause: string;
+	reason: string;
+	floor: string | null;
+}
+// Said with every safe mode: what turning extensions off costs, and what it turns off besides .pi/extensions (pi offers
+// no way to pick among packages and its built-in extensions from the command line).
+const SAFE_LIMIT = "an extension that is off enforces nothing while messages keep flowing; pi packages and pi's built-in extensions are off too";
+
+/** The floor of safe mode: the bridge alone, every entry of .pi/extensions off. */
+function bridgeAlone(agent: Agent, broken: string[], cause: string, why: string): Safe {
+	return { on: [], off: foundExtensions(agent), broken, cause, reason: `${cause}; ${why}every extension of .pi/extensions is off; ${SAFE_LIMIT}`, floor: why };
+}
+
+/**
+ * What safe mode starts, worked out again before every start in it (nothing is kept from an earlier one): the
+ * extensions pi names, or that fail alone, are off; the others pi turns on for this agent stay on once a check shows
+ * that they load together. The bridge alone when nothing could be named, that set does not load, or the agent is on
+ * the floor (`floor`: why it was taken). Null when everything loads again.
+ */
+async function safePlan(agent: Agent, failure = startFailure(agent), floor: string | null = null): Promise<Safe | null> {
+	if (!failure.extensions && !failure.cause) return null;
+	const cause = failure.cause ?? (failure.broken.length ? `failing to load: ${failure.broken.join(", ")}` : "an extension stops or hangs pi while loading, and pi could not name it");
+	if (floor !== null || !failure.broken.length) return bridgeAlone(agent, failure.broken, cause, floor ?? "");
+	const found = foundExtensions(agent);
+	const enabled = await piEnables(agent);
+	const on = found.filter((e) => enabled.includes(e) && !failure.broken.includes(e));
+	if (on.length && !dryStart(agent, { only: on }).ok) return bridgeAlone(agent, failure.broken, cause, "the others do not load without it either: ");
+	const off = found.filter((e) => !on.includes(e));
+	return { on, off, broken: failure.broken, cause, reason: `${cause}; off: ${off.join(", ") || "nothing in .pi/extensions"}; ${SAFE_LIMIT}`, floor: null };
+}
+
+/**
+ * The entries of .pi/extensions that pi itself turns on for this agent, by name: the owner may turn one off in pi's
+ * settings (`pi config`) or hide it with an ignore file, and `-e` would load it anyway. Asked of pi's own resolver, so
+ * its rules are not copied here. None when it cannot say: safe mode then keeps nothing on rather than too much.
+ */
+async function piEnables(agent: Agent): Promise<string[]> {
+	try {
+		const { DefaultPackageManager, SettingsManager } = await import("@earendil-works/pi-coding-agent");
+		const settingsManager = SettingsManager.create(agent.folder, piDir());
+		const r = await new DefaultPackageManager({ cwd: agent.folder, agentDir: piDir(), settingsManager }).resolve(async () => "skip");
+		return r.extensions.filter((e) => e.enabled).flatMap((e) => below(extensionsDir(agent), e.path)?.[0] ?? []);
+	} catch {
+		return [];
+	}
 }
 
 function logger(agent: Agent, channel?: string) {
@@ -165,7 +223,12 @@ function logger(agent: Agent, channel?: string) {
 	};
 }
 
-/** How a channel runs: its command, in its own private state folder, told where the port and its secrets are. */
+/** The command a channel runs to pilot its agent for its owner (`pp remote`), the words appended after it: given as
+ * PI_PERSONAL_REMOTE, a JSON array, so that a channel in any language finds this very Pi-Personal and private area. */
+export const remoteCommand = (agent: AgentRecord): string[] => [process.execPath, path.join(ROOT, "core", "cli.ts"), "--home", home(), "remote", agent.name, "--"];
+
+/** How a channel runs: its command, in its own private state folder, told where the port, its secrets and the agent's
+ * visible folder are, and how to pilot the agent (`pp remote`). */
 export function channelProgram(agent: Agent, channel: string): Program {
 	const ch = channels(agent).find((c) => c.name === channel);
 	if (!ch) throw new Error(`channel "${channel}" is not enabled for ${agent.name}`);
@@ -182,7 +245,36 @@ export function channelProgram(agent: Agent, channel: string): Program {
 			[`${ENV}_PORT`]: agent.paths.port,
 			[`${ENV}_STATE`]: state,
 			[`${ENV}_SECRETS`]: agent.paths.secrets,
+			[`${ENV}_FOLDER`]: agent.folder,
 			[`${ENV}_SETTINGS`]: JSON.stringify(ch.settings),
+			[`${ENV}_REMOTE`]: JSON.stringify(remoteCommand(agent)),
+		},
+	};
+}
+
+/**
+ * The kit, when one is installed with Pi-Personal (<installation>/kit/kit.ts): a door the core opens, knowing no piece
+ * of it. It runs with the agent's environment: its name, port, secrets, the state of in-agent extensions (where the
+ * kit's in-agent parts keep theirs), its visible folder, and how to pilot it.
+ */
+export function kitProgram(agent: AgentRecord): Program | undefined {
+	const file = path.join(ROOT, "kit", "kit.ts");
+	if (!fs.existsSync(file)) return undefined;
+	try {
+		privateDir(agent.paths.extensions);
+	} catch {} // the kit's trouble to say, if it needs it
+	return {
+		command: process.execPath,
+		args: [file],
+		cwd: fs.existsSync(agent.folder) ? agent.folder : home(),
+		env: {
+			...process.env,
+			[`${ENV}_AGENT`]: agent.name,
+			[`${ENV}_PORT`]: agent.paths.port,
+			[`${ENV}_SECRETS`]: agent.paths.secrets,
+			[`${ENV}_STATE`]: agent.paths.extensions,
+			[`${ENV}_FOLDER`]: agent.folder,
+			[`${ENV}_REMOTE`]: JSON.stringify(remoteCommand(agent)),
 		},
 	};
 }
@@ -338,13 +430,13 @@ export async function runForever(agent: Agent, channel?: string): Promise<void> 
 	port.ensurePort(agent.paths.port);
 	const write = port.emitter(agent.paths.port, (m) => log(m));
 	const emit = (e: port.PortEvent) => write(channel ? { ...e, channel } : e); // never throws
-	let safe: { off: string[]; broken: string[]; reason: string } | null = null;
+	let safe: Safe | null = null;
+	let planned = false; // safe mode was just worked out for the coming start
 	let failures: number[] = [];
 	let afterFailure = false; // the last start was the scheduled attempt after giving up
 	let stopping = false;
 	let child: ReturnType<typeof spawn> | undefined;
 	let restartReason = "";
-	const enabled = () => (channel ? [] : foundExtensions(agent));
 	const lock = lockFile(agent, channel);
 	const stoppedOnPurpose = () => fs.existsSync(agent.paths.stopped);
 	const ks: KeeperState = { running: false, safeMode: null, failed: null };
@@ -393,17 +485,18 @@ export async function runForever(agent: Agent, channel?: string): Promise<void> 
 	const program = (): Program => {
 		if (channel) return channelProgram(agent, channel);
 		// Normally pi loads what it finds itself (.pi/extensions, packages, MCP servers) and the bridge; in safe mode,
-		// only the bridge.
-		const args = [piCli(), ...(safe ? ["-ne"] : []), "-e", path.join(ROOT, "core", "bridge.ts")];
+		// nothing but the bridge, then the entries of .pi/extensions kept on (the bridge first, as in a normal start).
+		const bridge = ["-e", path.join(ROOT, "core", "bridge.ts")];
+		const args = [piCli(), ...(safe ? ["-ne", ...bridge, ...only(agent, safe.on)] : bridge)];
 		if (agent.settings.model) args.push("--model", agent.settings.model);
-		if (hasSession(agent)) args.push("--continue");
+		if (agent.settings.thinking) args.push("--thinking", agent.settings.thinking);
+		args.push(...sessionArgs(agent));
 		return {
 			command: process.execPath,
 			args,
 			cwd: agent.folder,
 			env: {
 				...piEnv(agent),
-				[`${ENV}_PORT`]: agent.paths.port,
 				[`${ENV}_SAFE_MODE`]: safe ? JSON.stringify(safe.off) : "",
 				[`${ENV}_RESTARTED`]: restartReason,
 			},
@@ -417,11 +510,16 @@ export async function runForever(agent: Agent, channel?: string): Promise<void> 
 		} catch (err) {
 			log(`${SETTINGS_FILE} cannot be read (${(err as Error).message}); starting with the settings read before`);
 		}
-		// In safe mode, check before each start whether everything loads again: then leave it.
-		if (safe && dryStart(agent, { all: true }).ok) {
-			log(`the extensions load again: leaving safe mode`);
-			safe = null;
+		// In safe mode, check before each start whether everything loads again: then leave it. Otherwise work out again
+		// what fails and what stays on (an extension may have been fixed, added or removed meanwhile); the bridge alone
+		// stays so until everything loads.
+		if (!channel && safe && !planned) {
+			const next = await safePlan(agent, startFailure(agent), safe.floor);
+			if (!next) log(`the extensions load again: leaving safe mode`);
+			else if (JSON.stringify([next.off, next.broken]) !== JSON.stringify([safe.off, safe.broken])) emit({ type: "safe_mode", extensions: next.broken, off: next.off, reason: next.reason });
+			safe = next;
 		}
+		planned = false;
 		const from = port.end(agent.paths.port);
 		const t0 = Date.now();
 		let result: { code: number | null; signal: NodeJS.Signals | null; pid?: number; spawnError?: string; hung?: boolean; ready?: boolean } = { code: null, signal: null };
@@ -434,8 +532,8 @@ export async function runForever(agent: Agent, channel?: string): Promise<void> 
 		}
 		if (p) {
 			const prog = p;
-			log(`starting ${channel ? `channel ${channel}` : "pi"}${safe ? ` in safe mode (without ${safe.off.join(", ")})` : ""}`);
-			ks.safeMode = safe;
+			log(`starting ${channel ? `channel ${channel}` : "pi"}${safe ? ` in safe mode (off: ${safe.off.join(", ") || "nothing in .pi/extensions"}; on: ${safe.on.join(", ") || "the bridge alone"})` : ""}`);
+			ks.safeMode = safe && { off: safe.off, broken: safe.broken, reason: safe.reason };
 			save();
 			result = await new Promise((resolve) => {
 				let watchdog: NodeJS.Timeout | undefined;
@@ -505,8 +603,10 @@ export async function runForever(agent: Agent, channel?: string): Promise<void> 
 						? "exited normally"
 						: `exited with code ${result.code}`;
 		const reached = !channel && !result.spawnError && (result.ready || startedSince(agent, from, result.pid));
+		// Safe mode kept extensions on, and pi did not get ready with them: the bridge alone next, whatever the cause.
+		const keptFailed = !channel && !reached && !!safe?.on.length;
 		// pi never reached the port: ask it why, once, without a model call (an extension, or pi itself).
-		const failure = !channel && !reached && !result.spawnError ? startFailure(agent) : undefined;
+		const failure = !channel && !reached && !result.spawnError && !keptFailed ? startFailure(agent) : undefined;
 		if (failure?.cause) why = `${why}: ${failure.cause}`;
 		log(`${channel ? `channel ${channel}` : "pi"} ${why} after ${Math.round(upMs / 1000)} s`);
 
@@ -518,16 +618,18 @@ export async function runForever(agent: Agent, channel?: string): Promise<void> 
 			continue;
 		}
 
-		// pi does not load with its extensions, and does without them: safe mode. Only when the check shows it; a
-		// failure the check cannot see is a plain failure (counted, then retried later), never a guess.
-		if (failure?.extensions && !safe) {
-			const reason = failure.broken.length ? `failing to load: ${failure.broken.join(", ")}` : "an extension stops or hangs pi while loading, and pi could not name it";
-			safe = { off: enabled(), broken: failure.broken, reason };
-			for (const e of failure.broken) log(`extension ${e} fails to load`);
-			emit({ type: "safe_mode", extensions: failure.broken, off: safe.off, reason });
-			log(`entering safe mode: starting with the bridge only (every extension off); ${reason}`);
+		// The floor of safe mode is the bridge alone: the agent stays reachable whatever its extensions do. Otherwise pi does
+		// not load with its extensions, and does without them: safe mode, only when the check shows it; a failure the check
+		// cannot see is a plain failure (counted, then retried later), never a guess. Neither is counted among the failures.
+		if (keptFailed || (failure?.extensions && !safe)) {
+			const floor = !!safe; // only keptFailed gets here with safe set
+			safe = safe ? bridgeAlone(agent, safe.broken, safe.cause, "pi did not get ready with the others on: ") : (await safePlan(agent, failure!))!;
+			planned = true;
+			if (!floor) for (const e of safe.broken) log(`extension ${e} fails to load`);
+			emit({ type: "safe_mode", extensions: safe.broken, off: safe.off, reason: safe.reason });
+			log(`${floor ? "safe mode" : "entering safe mode"}: starting with ${safe.on.length ? `the bridge and ${safe.on.join(", ")}` : "the bridge alone"}; ${safe.reason}`);
 			restartReason = why;
-			restarted(`${why}; safe mode`);
+			restarted(`${why}; safe mode${floor ? ", the bridge alone" : ""}`);
 			continue;
 		}
 
@@ -563,6 +665,33 @@ export async function runForever(agent: Agent, channel?: string): Promise<void> 
 		await sleep(delay, () => stopping);
 		if (stopping) return;
 	}
+}
+
+/**
+ * The agent's own conversation, pinned by its id (the `session` file): never pi's "newest session of the folder", which
+ * any pi started with the agent's environment (its own bash, a helper) would replace. pi opens the session with that
+ * id, or creates it. An agent made by 0.4 has sessions and no id: it resumes the newest once, and the bridge writes the
+ * id of the session pi opened.
+ */
+function sessionArgs(agent: Agent): string[] {
+	let id = "";
+	try {
+		id = fs.readFileSync(agent.paths.session, "utf8").trim();
+	} catch {}
+	if (id) return ["--session-id", id];
+	if (hasSession(agent)) return ["--continue"];
+	try {
+		return ["--session-id", newSession(agent)];
+	} catch {
+		return []; // the id cannot be written (a full disk): pi chooses one, and the bridge writes it once it can
+	}
+}
+
+/** A new conversation: a new id for the agent's session. The old sessions stay where they are (pi's /resume lists them). */
+export function newSession(agent: AgentRecord): string {
+	const id = randomUUID();
+	writeWhole(agent.paths.session, `${id}\n`, 0o600);
+	return id;
 }
 
 function hasSession(agent: Agent): boolean {

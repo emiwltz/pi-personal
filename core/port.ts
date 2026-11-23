@@ -11,12 +11,24 @@ const UNREADABLE_MS = 60_000; // a file that cannot be read for this long is set
 export interface From {
 	[key: string]: unknown;
 }
+/** Who wrote a message, as its channel knows it. The core carries it and decides nothing with it. */
+export interface Sender {
+	name?: string; // chosen by whoever writes: never proof of anything
+	id?: string; // the service's own stable identifier for that person
+	owner?: boolean; // true only for the agent's owner
+}
 export interface Message {
 	id: string;
 	text: string;
 	attachments?: string[];
 	from?: From;
 	conversation?: string; // where the answer goes ("<channel>:<id>"); messages of one conversation keep their order
+	sender?: Sender; // absent: a program wrote it, or a channel that names nobody
+	control?: string; // a word for the bridge itself ("interrupt"): done at once, never shown to the model; text is ""
+	question?: string; // with control "answer": the question answered
+	answer?: string;
+	wake?: boolean; // false: said to its conversation and kept in the agent's, without starting a run
+	note?: string; // with wake false: what the agent's conversation keeps instead of the text ("": nothing)
 }
 export interface Ref {
 	id: string;
@@ -50,10 +62,29 @@ export function invalid(msg: unknown): string | undefined {
 	if (typeof m.text !== "string") return "text must be a string";
 	if (m.attachments !== undefined && (!Array.isArray(m.attachments) || !m.attachments.every((a) => typeof a === "string" && path.isAbsolute(a))))
 		return "attachments must be absolute paths";
-	if (m.text === "" && !(Array.isArray(m.attachments) && m.attachments.length > 0)) return "text is empty and there are no attachments";
+	if (m.control !== undefined && (typeof m.control !== "string" || m.control === "" || m.control.length > 32)) return "control must be a string of 1 to 32 characters";
+	// Empty on a control message: a core that knows no control sets it aside as invalid instead of showing it to the model.
+	if (m.control !== undefined && m.text !== "") return "text must be empty on a control message";
+	// A core older than 0.5 would show an empty text with attachments to the model as a message.
+	if (m.control !== undefined && Array.isArray(m.attachments) && m.attachments.length > 0) return "attachments are not allowed on a control message";
+	if (m.text === "" && m.control === undefined && !(Array.isArray(m.attachments) && m.attachments.length > 0)) return "text is empty and there are no attachments";
+	if (m.question !== undefined && (typeof m.question !== "string" || m.question.length > 128)) return "question must be a string of at most 128 characters";
+	if (m.answer !== undefined && (typeof m.answer !== "string" || m.answer.length > 4000)) return "answer must be a string of at most 4000 characters";
+	if (m.wake !== undefined && typeof m.wake !== "boolean") return "wake must be a boolean";
+	if (m.note !== undefined && typeof m.note !== "string") return "note must be a string";
 	if (m.from !== undefined && (typeof m.from !== "object" || m.from === null || Array.isArray(m.from))) return "from must be an object";
 	if (m.from !== undefined && Buffer.byteLength(JSON.stringify(m.from)) > FROM_MAX) return `from must be at most ${FROM_MAX} bytes of JSON`;
 	if (m.conversation !== undefined && (typeof m.conversation !== "string" || m.conversation.length > 200)) return "conversation must be a string of at most 200 characters";
+	if (m.sender !== undefined) {
+		if (typeof m.sender !== "object" || m.sender === null || Array.isArray(m.sender)) return "sender must be an object";
+		const s = m.sender as Record<string, unknown>;
+		// Their length is never a reason to refuse: the bridge cuts what it prints.
+		if (s.name !== undefined && typeof s.name !== "string") return "sender.name must be a string";
+		if (s.id !== undefined && typeof s.id !== "string") return "sender.id must be a string";
+		if (s.owner !== undefined && typeof s.owner !== "boolean") return "sender.owner must be a boolean";
+	}
+	// Told without waking, it must be said somewhere or kept: otherwise it would do nothing at all.
+	if (m.wake === false && m.control === undefined && !m.conversation && m.note === "") return "a message with wake false and no conversation must keep something: its note is empty";
 	return undefined;
 }
 
@@ -176,6 +207,16 @@ export function take(port: string, id: string): void {
 			if (!fs.existsSync(from)) return; // already moved
 			fs.mkdirSync(taken(port), { recursive: true, mode: 0o700 });
 		}
+}
+
+/** Withdraw a message that still waits (docs/port.md). True when it was still in the inbox: it will never be taken in. */
+export function withdraw(port: string, id: string): boolean {
+	try {
+		fs.rmSync(path.join(inbox(port), `${id}.json`));
+		return true;
+	} catch {
+		return false;
+	}
 }
 
 /** Set a broken file aside in rejected/. Its id stays free: a corrected message with the same id is accepted. */

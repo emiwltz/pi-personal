@@ -70,8 +70,8 @@ test("an extension broken at load: safe mode, the user is told which, messages s
 	await t.waitEvent("main", from, (e) => e.type === "started" && !e.channel && Array.isArray(e.safeMode));
 	assert.equal((await t.cli("send", "main", "still there?", "--wait", "--timeout", "30")).stdout.trim(), "echo: still there?");
 	const s = await status();
-	assert.deepEqual(s.safeMode, { off: ["broken"], broken: ["broken"], reason: "failing to load: broken" });
-	assert.match((await t.cli("status", "main")).stdout, /SAFE MODE: running without its extensions: failing to load: broken/);
+	assert.deepEqual(s.safeMode, { off: ["broken"], broken: ["broken"], reason: "failing to load: broken; off: broken; an extension that is off enforces nothing while messages keep flowing; pi packages and pi's built-in extensions are off too" });
+	assert.match((await t.cli("status", "main")).stdout, /SAFE MODE: running with extensions off: failing to load: broken; off: broken; /);
 	// Fixed and restarted on purpose: safe mode ends.
 	settings({ extensions: [] });
 	const from2 = port.end(P());

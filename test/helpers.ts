@@ -24,6 +24,7 @@ export interface Env {
 	hc: (...args: string[]) => any;
 	portOf: (agent: string) => string;
 	waitEvent: (agent: string, from: number, pred: (e: port.Seen) => boolean, ms?: number) => Promise<port.Seen>;
+	type: (agent: string, text: string) => Promise<void>; // as the owner types in the agent's terminal
 	close: () => Promise<void>;
 }
 
@@ -81,7 +82,8 @@ export async function setup(name: string, opts: { requireKey?: string } = {}): P
 					baseUrl: `http://127.0.0.1:${model.port}/v1`,
 					api: "openai-completions",
 					...(opts.requireKey === undefined ? { apiKey: "fake" } : {}),
-					models: [{ id: "echo-1", name: "Fake", contextWindow: 32000, maxTokens: 2000 }],
+					// A reasoning model, so that pi sends a reasoning effort (pp thinking) as it does to a real one.
+					models: [{ id: "echo-1", name: "Fake", contextWindow: 32000, maxTokens: 2000, reasoning: true }],
 				},
 			},
 		}),
@@ -109,6 +111,19 @@ export async function setup(name: string, opts: { requireKey?: string } = {}): P
 		if (!found) throw new Error(`timed out waiting for an event of ${agent}; events:\n${fs.readFileSync(port.eventsFile(portOf(agent)), "utf8").slice(-3000)}`);
 		return found;
 	};
+	// Text typed in the agent's terminal (hc send, run outside any terminal, adds nothing to it).
+	const type = async (agent: string, text: string) => {
+		guard();
+		const addr = JSON.parse((await cli("status", agent, "--json")).stdout).address;
+		for (let i = 0; ; i++)
+			try {
+				execFileSync("hc", ["send", addr, text], { env, stdio: "pipe" });
+				return;
+			} catch (err) {
+				if (i > 20) throw err;
+				await sleep(500);
+			}
+	};
 	// Stop the isolated core and check it is gone (through its socket: any hc command would start it again)
 	// before removing the folder that holds the socket. A core left running is reported, never orphaned.
 	const close = async () => {
@@ -125,7 +140,7 @@ export async function setup(name: string, opts: { requireKey?: string } = {}): P
 			throw new Error(`the isolated Herdr Core ${env.HC_SESSION} is still running${trouble ? ` (${trouble})` : ""}; its folder ${dir} is kept so that it can be reached`);
 		fs.rmSync(dir, { recursive: true, force: true });
 	};
-	return { dir, home: path.join(dir, "home"), env, model, cli, hc, portOf, waitEvent, close };
+	return { dir, home: path.join(dir, "home"), env, model, cli, hc, portOf, waitEvent, type, close };
 }
 
 /** Change an agent's settings file: `extensions` lists the folders under extensions/ to turn on, by putting them where
@@ -146,14 +161,23 @@ export const lastStart = (portDir: string) => [...port.events(portDir).events].r
 
 export interface FakeModel {
 	port: number;
-	requests: { users: string[]; last: string; raw: string }[]; // users: without the "From:" line the bridge adds; raw: as sent
+	// users: without the header the bridge writes; raw: the last one as sent; first: the role of the first message (the
+	// system prompt's); the model and reasoning effort pi asked for; the names of the tools it declared
+	requests: { users: string[]; last: string; raw: string; first?: string; model?: string; effort?: string; tools: string[] }[];
 	close: () => void;
 }
 
-/** An OpenAI-compatible fake model. Replies "echo: <last user text>"; "tool: <cmd>" makes it call bash with <cmd>;
- * "call: <tool> <json>" calls any tool; "long:<n>" replies n x's; "fail: <why>" is refused with an HTTP 400;
+/** The header the bridge writes above a port message's text (core/bridge.ts): the note line if any (a message told
+ * without waking), the `From:` line if any, the `Sent:` line, one blank line. Exactly that and nothing else: text typed
+ * in the terminal has none, and a `From:` line a channel wrote itself stays in the text. */
+const HEADER = /^(?:\((?:Said to [^\n]* without waking you|A note left for you)\.\)\n)?(?:From: [^\n]*\n)?Sent: (?:Sun|Mon|Tues|Wednes|Thurs|Fri|Satur)day \d{4}-\d\d-\d\d \d\d:\d\d UTC[+-]\d\d:\d\d\n\n/;
+
+/** An OpenAI-compatible fake model. Replies "echo: <last user text>" (without the bridge's header); "tool: <cmd>" makes it call bash with <cmd>;
+ * "call: <tool> <json>" calls any tool, and "silent-call: <tool> <json>" the same, then answers nothing; "calls:
+ * [[<tool>, <args>], ...]" makes several calls in one step; "long:<n>" replies n x's; "fail: <why>" is refused with an HTTP 400;
  * "denied:" is refused with an HTTP 401, as a wrong key is; "silent:" ends the run with an empty answer; "flaky: <x>" is refused once with a passing error, then answered;
- * "interim-fail:" writes a sentence and calls a tool, then the next request is refused. */
+ * "interim-fail:" writes a sentence and calls a tool, then the next request is refused; "then-refuse:" refuses the request
+ * after a tool's result (with "silent-call:", a run whose only reply is the tool's). */
 export async function fakeModel(requireKey?: string): Promise<FakeModel> {
 	const requests: FakeModel["requests"] = [];
 	const flaked = new Set<string>(); // "flaky: <x>" is refused once with a passing error (503), then answered
@@ -176,11 +200,11 @@ export async function fakeModel(requireKey?: string): Promise<FakeModel> {
 			const r = JSON.parse(body || "{}");
 			const msgs: any[] = r.messages ?? [];
 			const last = msgs.at(-1) ?? {};
-			const users = msgs.filter((m) => m.role === "user").map((m) => textOf(m).replace(/^From: [^\n]*\n\n/, "")); // echo the text, not who wrote it
+			const users = msgs.filter((m) => m.role === "user").map((m) => textOf(m).replace(HEADER, "")); // echo the text, not who wrote it nor when
 			const utext = users.at(-1) ?? "";
-			requests.push({ users, last: last.role, raw: textOf(msgs.filter((m) => m.role === "user").at(-1) ?? {}) });
+			requests.push({ users, last: last.role, raw: textOf(msgs.filter((m) => m.role === "user").at(-1) ?? {}), first: msgs[0]?.role, model: r.model, effort: r.reasoning_effort, tools: (r.tools ?? []).map((x: any) => x.function?.name) });
 			n++;
-			let call: { name: string; arguments: string } | undefined;
+			let calls: { name: string; arguments: string }[] = [];
 			let reply = "";
 			// "fail: <why>" makes the provider refuse the request, as a real one does for a bad key or a bad request.
 			if (last.role !== "tool" && utext.includes("flaky:") && !flaked.has(utext)) {
@@ -190,7 +214,7 @@ export async function fakeModel(requireKey?: string): Promise<FakeModel> {
 				return;
 			}
 			// "interim-fail:" writes a sentence and calls a tool, then the next request is refused (a final failure).
-			if (last.role === "tool" && utext.includes("interim-fail:")) {
+			if (last.role === "tool" && (utext.includes("interim-fail:") || utext.includes("then-refuse:"))) {
 				res.writeHead(400, { "content-type": "application/json" });
 				res.end(JSON.stringify({ error: { message: "fake refusal after an interim reply", type: "invalid_request_error" } }));
 				return;
@@ -208,13 +232,16 @@ export async function fakeModel(requireKey?: string): Promise<FakeModel> {
 			}
 			if (last.role !== "tool" && utext.includes("interim-fail:")) {
 				reply = "Let me check.";
-				call = { name: "bash", arguments: JSON.stringify({ command: "echo checking" }) };
-			} else if (last.role === "tool") reply = `done: ${textOf(last).trim().slice(0, 200)}`;
-			else if (utext.includes("tool:")) call = { name: "bash", arguments: JSON.stringify({ command: utext.split("tool:")[1].trim() }) };
+				calls = [{ name: "bash", arguments: JSON.stringify({ command: "echo checking" }) }];
+			} else if (last.role === "tool") reply = utext.includes("silent-call:") ? "" : `done: ${textOf(last).trim().slice(0, 200)}`;
+			else if (utext.includes("tool:")) calls = [{ name: "bash", arguments: JSON.stringify({ command: utext.split("tool:")[1].trim() }) }];
+			else if (utext.includes("calls:"))
+				// "calls: [[<tool>, <arguments>], ...]": several tool calls in one step, as models often make them.
+				calls = JSON.parse(utext.split("calls:")[1].trim()).map(([name, args]: [string, unknown]) => ({ name, arguments: JSON.stringify(args) }));
 			else if (utext.includes("call:")) {
-				// "call: <tool name> <JSON arguments>": any tool the agent has (an MCP server's, for example).
+				// "call: <tool name> <JSON arguments>": any tool the agent has (an MCP server's, for example). "silent-call:" too.
 				const [name, ...rest] = utext.split("call:")[1].trim().split(" ");
-				call = { name, arguments: rest.join(" ") || "{}" };
+				calls = [{ name, arguments: rest.join(" ") || "{}" }];
 			}
 			else if (utext.includes("long:")) reply = `${"x".repeat(Number(utext.split("long:")[1]) || 5000)}`;
 			else if (utext.includes("silent:")) reply = "";
@@ -222,8 +249,8 @@ export async function fakeModel(requireKey?: string): Promise<FakeModel> {
 			res.writeHead(200, { "content-type": "text/event-stream" });
 			const chunk = (delta: unknown, finish: string | null = null) =>
 				res.write(`data: ${JSON.stringify({ id: `f${n}`, object: "chat.completion.chunk", created: 0, model: "echo-1", choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`);
-			if (call) {
-				chunk({ role: "assistant", content: reply || null, tool_calls: [{ index: 0, id: `call_${n}`, type: "function", function: call }] });
+			if (calls.length) {
+				chunk({ role: "assistant", content: reply || null, tool_calls: calls.map((c, i) => ({ index: i, id: `call_${n}_${i}`, type: "function", function: c })) });
 				chunk({}, "tool_calls");
 			} else {
 				chunk({ role: "assistant", content: reply });
@@ -238,3 +265,50 @@ export async function fakeModel(requireKey?: string): Promise<FakeModel> {
 }
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** An in-agent extension that asks its owner through the bridge (pi-personal.ask), for the tests of questions. Its tool
+ * `ask_owner` ({ title, options?, timeoutMs?, wait? }) answers "answer: <the answer>" ("none" when there was none), or
+ * at once "asked" with `wait: false` (the answer is only recorded, in its state folder's `answers`); its tool
+ * `confirm_probe` ({ title, timeoutMs }) opens pi's own dialog, as another extension's approval does. With the file
+ * `ask-at-load` in its state folder, it asks once while loading and records whether the question was `taken`. */
+export const ASKER = `import * as fs from "node:fs";
+import * as path from "node:path";
+const dir = path.join(process.env.PI_PERSONAL_STATE, "asker");
+fs.mkdirSync(dir, { recursive: true });
+const note = (f, v) => fs.appendFileSync(path.join(dir, f), JSON.stringify(v) + "\\n");
+const said = (text) => ({ content: [{ type: "text", text }], details: undefined });
+export default function (pi) {
+	if (fs.existsSync(path.join(dir, "ask-at-load"))) {
+		fs.rmSync(path.join(dir, "ask-at-load"));
+		const q = { title: "asked while loading", resolve: () => {} };
+		pi.events.emit("pi-personal.ask", q);
+		note("at-load", { taken: q.taken ?? null });
+	}
+	pi.registerTool({
+		name: "ask_owner",
+		label: "Ask the owner",
+		description: "Ask the owner a question",
+		parameters: { type: "object", properties: { title: { type: "string" }, options: { type: "array", items: { type: "string" } }, timeoutMs: { type: "number" } }, required: ["title"] },
+		async execute(_id, p) {
+			const asked = new Promise((resolve) => {
+				const q = { ...p, resolve };
+				pi.events.emit("pi-personal.ask", q);
+				if (!q.taken) resolve("(not taken)");
+			}).then((answer) => (note("answers", { title: p.title, answer: answer ?? null }), answer));
+			if (p.wait === false) return said("asked");
+			const answer = await asked;
+			return said("answer: " + (answer ?? "none"));
+		},
+	});
+	pi.registerTool({
+		name: "confirm_probe",
+		label: "Confirm",
+		description: "Ask for a confirmation in the terminal",
+		parameters: { type: "object", properties: { title: { type: "string" }, timeoutMs: { type: "number" } }, required: ["title"] },
+		async execute(_id, p, _signal, _update, ctx) {
+			const ok = await ctx.ui.confirm(p.title, "Go on?", { timeout: p.timeoutMs });
+			return said("confirmed: " + ok);
+		},
+	});
+}
+`;

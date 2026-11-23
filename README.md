@@ -23,6 +23,7 @@ Pi-Personal gives you an agent of your own: a [pi](https://github.com/earendil-w
 - **Always there.** It runs in the background, comes back by itself after a crash or a restart of the machine (the guide sets this up), and picks up the work that was cut off.
 - **Watch it, take over.** `pp` shows how it is doing; Enter opens its screen, which is all of pi; `ctrl+\` comes back, and it keeps working.
 - **Reach it from anywhere.** Telegram is built in. Any other service is a small program, in any language. [write a channel →](docs/write-a-channel.md)
+- **Pilot it from the chat.** From Telegram, its owner stops a run, starts a fresh conversation, changes the model, gives it a key or answers its question; it sends files back. The terminal is never required. [Telegram →](channels/telegram/README.md)
 - **It sets itself up.** Ask it to change its model, its instructions or who may write to it: it knows how, and takes such requests from its owner only. [its manual →](docs/for-agents.md)
 - **Yours.** Everything is a plain file you can read. Secrets stay in a folder only you can open. No account, no telemetry.
 
@@ -35,7 +36,7 @@ curl -fsSL https://raw.githubusercontent.com/emiwltz/pi-personal/main/install.sh
 Linux or macOS. The installer brings Node.js if it is missing, changes nothing else without asking, and ends in the guide. Then, every day:
 
 ```sh
-pp            # how your agent is doing: Enter opens it, ctrl+\ comes back
+pp            # how your agent is doing, and a menu of everything: Enter opens it, ctrl+\ comes back
 ```
 
 | | |
@@ -61,7 +62,7 @@ The core is three parts, and does nothing else:
 - **Herdr Core** is where it lives: a terminal that keeps running in the background, where the agent can open other sessions.
 - **The port** is how anything reaches it: a folder of plain files. A message is a file; every reply is a line.
 
-A message is never lost and never handled twice, a reply never goes to someone it was not meant for, and every message ends with a reply or an error, even when pi crashes in the middle of its work. What a messaging service does its own way belongs to its channel; what an agent could do belongs to pi's extensions. The core never changes to add an ability.
+A message is never lost and never handled twice, a reply never goes to someone it was not meant for, and every message ends with a reply or an error, even when pi crashes in the middle of its work. What a messaging service does its own way belongs to its channel; what an agent could do belongs to pi's extensions. The core carries only what they all need from it (stopping a run, a file out, a question for you and its answer, a message told without waking the agent), and decides nothing with it.
 
 ## Learn more
 
@@ -69,18 +70,18 @@ A message is never lost and never handled twice, a reply never goes to someone i
 
 ## Status
 
-Version 0.4, early. Tested on Linux and macOS (arm64), with pi 1.5.2, Herdr Core 0.1.18 to 0.1.21, and Node.js 22 and 24; installed from scratch on a simulated fresh machine on both, and used for real with a hosted model and Telegram. Not yet proven: weeks of continuous use, a power cut, a real fresh machine of every kind.
+Version 0.5, early. Its test suite passes on Linux (Node.js 22, pi 1.6.0, Herdr Core 0.1.18 and 0.1.21, a Raspberry Pi included), against a fake model and a fake Telegram; it passed on macOS too, before the last changes to the Telegram replies and to `pp`'s screen. It was used for real on a Raspberry Pi with a hosted model and Telegram, and an update from 0.4.1 was rehearsed: the agent kept its conversation, its settings and its channel. Not yet proven: weeks of continuous use, a power cut, a real fresh machine of every kind.
 
 Pi-Personal follows pi: a new pi is adopted once the tests pass with it, and `pp update` brings it.
 
 ## Contributing
 
-About 6,000 lines of TypeScript, run directly by Node.js, with one dependency: pi. Checked by 185 tests that run the real pi in an isolated Herdr Core, kill it in the middle of its work, and fill its disk.
+About 7,500 lines of TypeScript (the core 6,400, the two channels 1,100), run directly by Node.js, with one dependency: pi. Checked by 296 tests that run the real pi in an isolated Herdr Core, kill it in the middle of its work, and fill its disk.
 
 ```sh
 git clone https://github.com/emiwltz/pi-personal.git && cd pi-personal
 npm ci
-npm test      # about 15 minutes; needs Herdr Core's hc on your PATH, never touches your own agents
+npm test      # about 25 minutes; needs Herdr Core's hc on your PATH, never touches your own agents
 ```
 
 If you are a person or an agent working on this repository, read [CONTRIBUTING.md](CONTRIBUTING.md) first: what the project must stay, how it is tested, how a version is made.

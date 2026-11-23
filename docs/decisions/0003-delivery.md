@@ -1,6 +1,6 @@
 # 0003 — How the bridge hands messages to pi
 
-Status: accepted (2026-11-16).
+Status: accepted (2026-11-16). *Amended in 0.5 ([0004](0004-what-the-core-carries.md)): the model reads a port message under a header the bridge alone writes (`From:`, `Sent:`); a control message is done at once and never placed in the session; a message told without waking is placed as a `pi-personal.note`, which starts no run and counts for duplicates, never in `openWork`; a file sent with `attach_file` counts as a reply.*
 
 ## Decision
 

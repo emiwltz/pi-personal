@@ -1,11 +1,15 @@
 // Models and sign-ins are pi's: pi's own screen does them (/login connects a provider, with an account or an API key;
 // /model chooses the model), with Pi-Personal's pi directory, shared by all agents. Pi-Personal only reads what pi
-// stored: which providers pi lists models for, and the model pi keeps as its default. Nothing here prints a secret.
-import { execFile, spawnSync } from "node:child_process";
+// stored: which providers pi lists models for, and the model pi keeps as its default; and, for a channel, where there
+// is no terminal, it runs pi's own API-key sign-in with the key it was given (`loginWithKey`). Nothing here prints a
+// secret.
+import { spawn, spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
+import { COMMAND, SLUG } from "./name.ts";
 import { piDir, privateDir, ROOT, writeWhole } from "./paths.ts";
 import { preparePi } from "./agents.ts";
 import { piCli, piPackage } from "./runner.ts";
@@ -139,8 +143,40 @@ export async function tidyKey(id: string): Promise<boolean> {
 	return left;
 }
 
-/** The providers agents can use now: those pi lists models for. */
-export const connected = (): string[] => [...new Set(models().map((m) => m.provider))];
+/**
+ * Sign in to a provider with an API key given here, without a terminal: pi's own `auth login` refuses to run without
+ * one, and a channel passes the key on standard input. pi's own API-key sign-in for that provider (from pi's list of
+ * providers, those of its models.json included) is run with an interaction that answers its one hidden prompt with
+ * the key and refuses any other prompt; what it returns is stored under the provider's id, as pi stores it. A running
+ * agent reads auth.json again when it changes. Returns the provider's name.
+ */
+export async function loginWithKey(id: string, key: string): Promise<string> {
+	// pi runs a stored key that starts with "!" as a shell command and fills "$NAME" in from the environment: right for
+	// what someone types at their machine, never for words that came through a messaging service.
+	if (key.startsWith("!") || key.includes("$")) throw new Error(`a key that starts with "!" or holds "$" is not stored from here (pi would run it or fill it in): run ${COMMAND} login ${id} --api-key in a terminal`);
+	preparePi();
+	const { ModelRuntime } = await piModule("@earendil-works/pi-coding-agent", "pi-coding-agent/dist/index.js");
+	// Pi-Personal's own pi directory, never the person's ~/.pi; no catalog refresh: only the provider is needed.
+	const runtime = await ModelRuntime.create({ authPath: ourAuth(), modelsPath: path.join(piDir(), "models.json"), refreshOnCreate: false });
+	const p = runtime.getProvider(id);
+	if (!p) throw new Error(`pi knows no provider "${id}"`);
+	if (typeof p.auth?.apiKey?.login !== "function") throw new Error(`${p.name} takes no API key: sign in with an account, in a terminal: ${COMMAND} login ${id}`);
+	const more = `${p.name} asks for more than a key: run ${COMMAND} login ${id} --api-key in a terminal`;
+	let asked = 0;
+	const credential = await p.auth.apiKey.login({
+		signal: AbortSignal.timeout(30_000),
+		notify() {},
+		prompt: async (q: { type: string }) => {
+			if (q.type !== "secret" || asked++) throw new Error(more);
+			return key;
+		},
+	});
+	if (credential?.type !== "api_key") throw new Error(more);
+	await editAuth((d) => {
+		d[id] = credential;
+	});
+	return String(p.name);
+}
 
 export interface Model {
 	provider: string;
@@ -149,20 +185,71 @@ export interface Model {
 	thinking?: boolean;
 }
 
+/** A file for pi to write into, in a folder of its own readable by the user only; `done` gives what was written and removes it. */
+function scratch(): { fd: number; done: () => string } {
+	const dir = fs.mkdtempSync(path.join(os.tmpdir(), `${SLUG}-list-`));
+	const file = path.join(dir, "out");
+	const fd = fs.openSync(file, "w", 0o600);
+	return {
+		fd,
+		done: () => {
+			try {
+				fs.closeSync(fd);
+				return fs.readFileSync(file, "utf8");
+			} finally {
+				fs.rmSync(dir, { recursive: true, force: true });
+			}
+		},
+	};
+}
+export interface Printed {
+	stdout: string;
+	stderr: string;
+	status: number | null; // null when pi did not end by itself (it could not start, or took more than a minute)
+}
+/**
+ * What pi prints for `args`, whole. Read through a pipe, pi's output is cut short when the machine is busy: pi ends
+ * before the pipe is drained, with exit code 0 all the same (12 to 20 whole lists of 40 under load, pi 1.5.2 and 1.6.0
+ * alike; the end of the list, so the last providers' models, went missing). Written into a file it is always whole:
+ * so pi writes into a file, read once pi has ended.
+ */
+export function piPrints(args: string[], env: NodeJS.ProcessEnv): Printed {
+	const out = scratch();
+	const r = spawnSync(process.execPath, [piCli(), ...args], { env, stdio: ["ignore", out.fd, "pipe"], encoding: "utf8", timeout: 60_000 });
+	return { stdout: out.done(), stderr: r.stderr ?? "", status: r.status };
+}
+/** The same, without blocking (so that a wait can be drawn meanwhile). */
+export function piPrintsAsync(args: string[], env: NodeJS.ProcessEnv): Promise<Printed> {
+	return new Promise((resolve) => {
+		const out = scratch();
+		let stderr = "";
+		let ended = false;
+		const end = (status: number | null) => {
+			if (ended) return; // "error" and "close" can both come
+			ended = true;
+			clearTimeout(timer);
+			resolve({ stdout: out.done(), stderr, status });
+		};
+		const child = spawn(process.execPath, [piCli(), ...args], { env, stdio: ["ignore", out.fd, "pipe"] });
+		const timer = setTimeout(() => child.kill("SIGKILL"), 60_000);
+		child.stderr?.on("data", (c) => (stderr += c));
+		child.on("error", (err) => {
+			stderr += err.message;
+			end(null);
+		});
+		child.on("close", (code) => end(code));
+	});
+}
+
 /** The models of the providers Pi-Personal is connected to (by its sign-ins, or by pi's models.json), from pi's own list. */
 export function models(): Model[] {
-	const r = spawnSync(process.execPath, [piCli(), "--list-models"], { encoding: "utf8", env: storedOnly(), timeout: 60_000 });
-	return parseModels(r.stdout ?? "");
+	return parseModels(piPrints(["--list-models"], storedOnly()).stdout);
 }
-/** The same, without blocking (so that a wait can be drawn meanwhile); `error` when pi did not answer, which is not the
- * same as "nothing connected". */
-export function modelsAsync(): Promise<{ list: Model[]; error?: string }> {
-	return new Promise((resolve) => {
-		execFile(process.execPath, [piCli(), "--list-models"], { encoding: "utf8", env: storedOnly(), timeout: 60_000, maxBuffer: 16 * 1024 * 1024 }, (err, stdout, stderr) => {
-			const list = parseModels(stdout ?? "");
-			resolve(err && !list.length ? { list, error: (stderr || err.message).trim().split("\n").pop() } : { list });
-		});
-	});
+/** The same, without blocking; `error` when pi did not answer, which is not the same as "nothing connected". */
+export async function modelsAsync(): Promise<{ list: Model[]; error?: string }> {
+	const r = await piPrintsAsync(["--list-models"], storedOnly());
+	const list = parseModels(r.stdout);
+	return r.status !== 0 && !list.length ? { list, error: (r.stderr.trim() || "pi did not answer").split("\n").pop() } : { list };
 }
 function parseModels(stdout: string): Model[] {
 	const rows = stdout.split("\n").map((l) => l.trim().split(/\s{2,}/));

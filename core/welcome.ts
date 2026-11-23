@@ -381,7 +381,8 @@ async function hello(name: string, created: boolean): Promise<boolean> {
 async function greet(dir: string): Promise<{ said: string[]; error?: string }> {
 	const id = `setup-${randomUUID()}`;
 	const from = port.end(dir);
-	port.submit(dir, { id, text: "Hello! I have just set you up. (This is our first meeting: see \"First meeting\" in your instructions.)", conversation: "cli" });
+	// The guide is run by the owner, at their own machine: the hello is theirs, as what they type in `chat` is.
+	port.submit(dir, { id, text: "Hello! I have just set you up. (This is our first meeting: see \"First meeting\" in your instructions.)", conversation: "cli", sender: { owner: true, name: os.userInfo().username, id: "pp chat" } });
 	const said: string[] = [];
 	let error: string | undefined;
 	const ac = new AbortController();
@@ -494,12 +495,11 @@ async function menu(): Promise<number | undefined> {
 			const a = agents.load(name);
 			const m = await model(false, a.settings.model);
 			if (m.model && m.model !== a.settings.model) {
-				agents.editSettings(a.folder, (x) => {
-					x.model = m.model;
-				});
-				const r = await waiting(`Restarting ${name} with ${m.model}`, () => control.restart(name));
-				if (r.ready === false) ask.fail(`${name} did not get ready: ${r.trouble}`);
-				else ask.ok(`${name} runs with ${m.model}`);
+				const chosen = m.model;
+				const r = await waiting(`Restarting ${name} with ${chosen}`, () => control.setting(name, "model", chosen));
+				if (r.later) ask.ok(`${name} is stopped: it runs with ${chosen} from its next start (${COMMAND} start ${name})`);
+				else if (r.ready === false) ask.fail(`${name} did not get ready: ${r.trouble}`);
+				else ask.ok(`${name} runs with ${chosen}`);
 			} else if (m.model) ask.ok(`${name} already runs with ${m.model}`);
 		}
 	}

@@ -102,7 +102,8 @@ test("a file abandoned half written is set aside after 5 s, and its id is not bu
 	assert.equal(evs(from).find((e) => e.type === "message" && ids(e).includes("abandoned-1"))!.text, "echo: the whole message");
 });
 
-test("a message that cannot be read does not block the messages after it; it is set aside after 60 s", async () => {
+test("a message that cannot be read does not block the messages after it; it is set aside after 60 s", async (ctx) => {
+	if (process.getuid?.() === 0) return ctx.skip("root can read any file");
 	const from = port.end(P());
 	const file = inbox("locked-1.json");
 	fs.writeFileSync(file, JSON.stringify({ id: "locked-1", text: "cannot read me" }));

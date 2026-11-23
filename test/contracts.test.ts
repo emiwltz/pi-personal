@@ -2,9 +2,11 @@
 // is updated, these tests say at once whether an assumption broke, before a user finds out.
 import { after, before, test } from "node:test";
 import assert from "node:assert/strict";
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { THINKING } from "../core/agents.ts";
+import { hcNote } from "../core/bridge.ts";
 import { piCli } from "../core/runner.ts";
 import * as port from "../core/port.ts";
 import { type Env, setup, sleep } from "./helpers.ts";
@@ -42,11 +44,14 @@ test("pi: its providers' names and default models can be read (pp setup names th
 	assert.equal(typeof (await p.defaultModel("anthropic")), "string", "pi names a default model for Anthropic");
 });
 
-test("pi: auth login takes --api-key, and --list-models prints a provider/model table (pp login and pp setup use them)", () => {
+test("pi: auth login takes --api-key, and --list-models prints a provider/model table, whole when pi writes it into a file (pp login, pp models and pp setup use them)", async () => {
 	const env = { ...t.env, PI_CODING_AGENT_DIR: path.join(t.home, "pi"), PI_TELEMETRY: "0", PI_SKIP_VERSION_CHECK: "1", PI_OFFLINE: "1" };
 	const login = spawnSync(process.execPath, [piCli(), "auth", "login"], { env, encoding: "utf8", timeout: 60_000 });
 	assert.match(`${login.stdout}${login.stderr}`, /pi auth login <provider> \[--api-key\]/);
-	const list = spawnSync(process.execPath, [piCli(), "--list-models"], { env, encoding: "utf8", timeout: 60_000 });
+	// Through a pipe, pi cuts this list short on a busy machine (it ends before the pipe is drained, exit code 0): the
+	// last providers go missing, the fake one among them. Pi-Personal has pi write into a file instead (piPrints).
+	const list = (await import("../core/providers.ts")).piPrints(["--list-models"], env);
+	assert.equal(list.status, 0, list.stderr);
 	assert.match(list.stdout, /^provider\s{2,}model\s{2,}/m);
 	assert.match(list.stdout, /^fake\s{2,}echo-1\s/m);
 });
@@ -92,6 +97,35 @@ test("a pasted API key is stored without what a terminal adds around a paste (sp
 	}
 });
 
+test("pi: a provider's API-key sign-in asks for the key in one hidden prompt and returns it as an api_key entry, and pi uses an entry stored that way (pp remote login, with no terminal)", async () => {
+	const p = await import("../core/providers.ts");
+	const file = path.join(t.home, "pi", "auth.json");
+	const kept = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : undefined;
+	const was = process.env.PI_PERSONAL_HOME;
+	process.env.PI_PERSONAL_HOME = t.home;
+	const env = { ...t.env, PI_CODING_AGENT_DIR: path.join(t.home, "pi"), PI_TELEMETRY: "0", PI_SKIP_VERSION_CHECK: "1", PI_OFFLINE: "1" };
+	try {
+		// A provider of pi's own and one of its models.json: each asked for the key alone, and stored under its id.
+		for (const [id, key] of [["anthropic", "sk-ant-contract-123"], ["fake", "sk-fake-contract-456"]]) {
+			assert.ok((await p.loginWithKey(id, key)).length > 0);
+			assert.deepEqual(JSON.parse(fs.readFileSync(file, "utf8"))[id], { type: "api_key", key });
+			const used = spawnSync(process.execPath, [piCli(), "auth", "print-api-key", "--provider", id], { env, encoding: "utf8", timeout: 60_000 });
+			assert.equal(used.stdout.trim(), key, `pi uses the stored entry for ${id}: ${used.stderr}`);
+		}
+		assert.equal(fs.statSync(file).mode & 0o777, 0o600);
+		// One that asks for a choice first (Amazon Bedrock) or for more than the key (Cloudflare) is refused, nothing stored.
+		for (const id of ["amazon-bedrock", "cloudflare-workers-ai"]) {
+			await assert.rejects(p.loginWithKey(id, "sk-more"), /asks for more than a key: run pp login .* --api-key in a terminal/);
+			assert.equal(JSON.parse(fs.readFileSync(file, "utf8"))[id], undefined);
+		}
+	} finally {
+		if (was === undefined) delete process.env.PI_PERSONAL_HOME;
+		else process.env.PI_PERSONAL_HOME = was;
+		if (kept === undefined) fs.rmSync(file, { force: true });
+		else fs.writeFileSync(file, kept, { mode: 0o600 });
+	}
+});
+
 test("pi: in rpc mode it answers get_state once it has loaded (the runner's sign that pi got through loading)", () => {
 	const r = dry(folder("plain"), ["-ne"]);
 	assert.match(r.stdout, /"command"\s*:\s*"get_state"/);
@@ -117,6 +151,51 @@ test("pi: it loads .pi/extensions of its folder by itself, and -ne turns them of
 	assert.ok(fs.existsSync(marker), "found and loaded by pi itself");
 });
 
+test("pi: -ne -e <a> -e <b> loads exactly those extensions, none other it finds (safe mode keeps the healthy ones on this way)", () => {
+	const f = folder("picked");
+	const loaded = (n: string) => path.join(f, `loaded-${n}`);
+	for (const n of ["a", "b", "c"]) {
+		fs.mkdirSync(path.join(f, ".pi", "extensions", n), { recursive: true });
+		fs.writeFileSync(path.join(f, ".pi", "extensions", n, "index.ts"), `import * as fs from "node:fs";\nfs.writeFileSync(${JSON.stringify(loaded(n))}, "x");\nexport default function () {}\n`);
+	}
+	const r = dry(f, ["-ne", "-e", path.join(f, ".pi", "extensions", "a"), "-e", path.join(f, ".pi", "extensions", "b")]);
+	assert.match(r.stdout, /"success"\s*:\s*true/);
+	assert.deepEqual(["a", "b", "c"].filter((n) => fs.existsSync(loaded(n))), ["a", "b"]);
+});
+
+test("pi: a tool whose extension was off at a request is recorded as removed, and stays off at later starts once its extension loads again; pi.setActiveTools turns it on (the bridge's tools-off and tools-on)", async () => {
+	const f = folder("removed");
+	const ext = path.join(f, ".pi", "extensions", "tooly");
+	fs.mkdirSync(ext, { recursive: true });
+	const turnOn = path.join(f, "turn-on");
+	fs.writeFileSync(
+		path.join(ext, "index.ts"),
+		`import * as fs from "node:fs";
+export default function (pi) {
+	pi.registerTool({ name: "tooly_ping", label: "Ping", description: "pong", parameters: { type: "object", properties: {} }, async execute() { return { content: [{ type: "text", text: "pong" }], details: undefined }; } });
+	pi.on("session_start", () => { if (fs.existsSync(${JSON.stringify(turnOn)})) pi.setActiveTools([...pi.getActiveTools(), "tooly_ping"]); });
+}
+`,
+	);
+	const env = { ...t.env, PI_CODING_AGENT_DIR: path.join(t.home, "pi"), PI_CODING_AGENT_SESSION_DIR: path.join(f, "sessions"), PI_TELEMETRY: "0", PI_SKIP_VERSION_CHECK: "1" };
+	// One prompt, printed, on one session; the fake model answers in this process, so pi runs asynchronously.
+	const ask = async (args: string[], text: string) => {
+		const pi = spawn(process.execPath, [piCli(), ...args, "--model", "fake/echo-1", "--session-id", "6f0c1a52-6d1e-4c62-9a55-3f5d2d0b7a11", "-p", text], { cwd: f, env, stdio: ["ignore", "pipe", "pipe"] });
+		let out = "";
+		pi.stdout.on("data", (d) => (out += d));
+		pi.stderr.on("data", (d) => (out += d));
+		assert.equal(await new Promise((r) => pi.on("exit", r)), 0, out);
+		return t.model.requests.findLast((q) => q.users.at(-1) === text)!.tools;
+	};
+	assert.ok((await ask([], "with it")).includes("tooly_ping"));
+	assert.ok(!(await ask(["-ne"], "without it")).includes("tooly_ping"), "-ne: its extension is off");
+	assert.ok(!(await ask([], "loaded again")).includes("tooly_ping"), "loaded again, but pi keeps it off");
+	fs.writeFileSync(turnOn, "");
+	assert.ok((await ask([], "turned on")).includes("tooly_ping"), "pi.setActiveTools at session_start declares it again");
+	fs.rmSync(turnOn);
+	assert.ok((await ask([], "and after")).includes("tooly_ping"), "and pi recorded it as added");
+});
+
 test("pi: the session stores a custom message with its details, the bridge's markers, and lives in PI_CODING_AGENT_SESSION_DIR", async () => {
 	assert.equal((await t.cli("init", "main", path.join(t.dir, "agents", "main"), "--model", "fake/echo-1")).code, 0);
 	assert.equal((await t.cli("start", "main")).code, 0);
@@ -132,7 +211,163 @@ test("pi: the session stores a custom message with its details, the bridge's mar
 	assert.ok(fs.existsSync(path.join(t.portOf("main"), "taken", "c-1.json")));
 });
 
-test("pi: --continue resumes the same session after a restart", async () => {
+test("pi: --session-id <id> creates that session, then opens it whatever is newer; --continue opens the newest (the runner pins the agent's session; an agent made by 0.4 is started once with --continue)", async () => {
+	const f = folder("pinned");
+	const sessions = path.join(t.dir, "pinned-sessions");
+	// Not spawnSync: the fake model answers from this process. Standard input closed: pi -p would read it.
+	const pi = async (...args: string[]) => {
+		const p = spawn(process.execPath, [piCli(), "-ne", "--model", "fake/echo-1", ...args], {
+			cwd: f,
+			env: { ...t.env, PI_CODING_AGENT_DIR: path.join(t.home, "pi"), PI_CODING_AGENT_SESSION_DIR: sessions, PI_TELEMETRY: "0", PI_SKIP_VERSION_CHECK: "1" },
+			stdio: ["ignore", "ignore", "pipe"],
+		});
+		let err = "";
+		p.stderr.on("data", (d) => (err += d));
+		assert.equal(await new Promise((r) => p.on("exit", r)), 0, err);
+		return t.model.requests.at(-1)!.users;
+	};
+	await pi("--session-id", "pinned-1", "-p", "first");
+	const files = () => (fs.readdirSync(sessions) as string[]).filter((x) => x.endsWith(".jsonl"));
+	assert.equal(files().length, 1);
+	assert.equal(JSON.parse(fs.readFileSync(path.join(sessions, files()[0]), "utf8").split("\n")[0]).id, "pinned-1", "created with that id");
+	await pi("-p", "a helper's own session"); // newer, as a pi started with the agent's environment leaves
+	assert.deepEqual(await pi("--continue", "-p", "third"), ["a helper's own session", "third"], "--continue: the newest session");
+	assert.deepEqual(await pi("--session-id", "pinned-1", "-p", "second"), ["first", "second"], "--session-id: that session, not the newest");
+	assert.equal(files().length, 2, "opened, not created again");
+});
+
+test("pi: a custom message sent with triggerTurn false while pi is idle is in the session when the call returns, starts no run and sends extensions no message_start; the session file is written only once a user or assistant message is in it, then each entry at once (notes told without waking)", async () => {
+	const f = folder("noted");
+	const sessions = path.join(t.dir, "noted-sessions");
+	const out = path.join(t.dir, "noted.jsonl");
+	const probe = path.join(f, "probe.ts");
+	fs.writeFileSync(
+		probe,
+		`import * as fs from "node:fs";
+export default function (pi) {
+	let starts = 0;
+	pi.on("message_start", (e) => { if (e.message.role === "custom") starts++; });
+	pi.on("session_start", (_e, ctx) => {
+		const file = ctx.sessionManager.getSessionFile();
+		const idle = ctx.isIdle();
+		pi.sendMessage({ customType: "probe.note", content: "kept " + process.env.PROBE_RUN, display: true, details: { n: 1 } }, { triggerTurn: false });
+		const inSession = ctx.sessionManager.getEntries().some((e) => e.type === "custom_message" && e.customType === "probe.note" && e.content === "kept " + process.env.PROBE_RUN);
+		const onDisk = fs.existsSync(file) && fs.readFileSync(file, "utf8").includes("kept " + process.env.PROBE_RUN);
+		fs.appendFileSync(${JSON.stringify(out)}, JSON.stringify({ run: process.env.PROBE_RUN, idle, inSession, onDisk, fileBefore: fs.existsSync(file), starts }) + "\\n");
+	});
+}
+`,
+	);
+	const pi = async (run: string, ...args: string[]) => {
+		const p = spawn(process.execPath, [piCli(), "-ne", "-e", probe, "--model", "fake/echo-1", "--session-id", "noted-1", ...args], {
+			cwd: f,
+			env: { ...t.env, PROBE_RUN: run, PI_CODING_AGENT_DIR: path.join(t.home, "pi"), PI_CODING_AGENT_SESSION_DIR: sessions, PI_TELEMETRY: "0", PI_SKIP_VERSION_CHECK: "1" },
+			stdio: [args.includes("rpc") ? "pipe" : "ignore", "ignore", "pipe"],
+		});
+		let err = "";
+		p.stderr.on("data", (d) => (err += d));
+		if (args.includes("rpc")) p.stdin!.end(`${JSON.stringify({ type: "get_state" })}\n`); // pi answers, then ends with its input
+		assert.equal(await new Promise((r) => p.on("exit", r)), 0, err);
+	};
+	const asked = t.model.requests.length;
+	const files = () => (fs.existsSync(sessions) ? fs.readdirSync(sessions) : []).filter((x) => x.endsWith(".jsonl"));
+	await pi("new", "--mode", "rpc");
+	assert.equal(t.model.requests.length, asked, "no run: the model was not asked");
+	assert.deepEqual(files(), [], "custom messages alone: pi wrote no session file");
+	await pi("reply", "-p", "hello"); // a user message and the model's reply: now the file exists
+	assert.equal(files().length, 1);
+	await pi("kept", "--mode", "rpc");
+	const seen = fs.readFileSync(out, "utf8").trim().split("\n").map((l) => JSON.parse(l));
+	assert.deepEqual(seen[0], { run: "new", idle: true, inSession: true, onDisk: false, fileBefore: false, starts: 0 }, "idle: in the session at once, no message_start");
+	assert.deepEqual(seen[2], { run: "kept", idle: true, inSession: true, onDisk: true, fileBefore: true, starts: 0 }, "once the file exists, the entry is on disk when the call returns");
+	assert.equal(t.model.requests.length, asked + 1, "only the prompt reached the model");
+});
+
+test("pi: a dialog opened by an extension raises ui_prompt_start, and overlapping dialogs share one span that ends with the last; neither event names the asker; a dialog given an AbortSignal closes on abort (the bridge's blocked state and its own dialog)", async () => {
+	const f = folder("prompts");
+	const out = path.join(t.dir, "prompts.jsonl");
+	const probe = path.join(f, "probe.ts");
+	fs.writeFileSync(
+		probe,
+		`import * as fs from "node:fs";
+const log = (x) => fs.appendFileSync(${JSON.stringify(out)}, JSON.stringify(x) + "\\n");
+const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+export default function (pi) {
+	pi.on("ui_prompt_start", (e) => log(e));
+	pi.on("ui_prompt_end", (e) => log(e));
+	pi.on("session_start", (_e, ctx) => {
+		void (async () => {
+			const a = new AbortController();
+			const b = new AbortController();
+			const first = ctx.ui.select("First?", ["x", "y"], { signal: a.signal });
+			const second = ctx.ui.confirm("Second?", "body", { signal: b.signal });
+			await pause(300);
+			log({ mark: "both open" });
+			a.abort();
+			log({ mark: "first closed", answer: (await first) ?? null });
+			await pause(300);
+			b.abort();
+			log({ mark: "second closed", answer: await second });
+			await pause(300);
+			log({ mark: "done" });
+		})();
+	});
+}
+`,
+	);
+	const p = spawn(process.execPath, [piCli(), "-ne", "-e", probe, "--no-session", "--mode", "rpc"], {
+		cwd: f,
+		env: { ...t.env, PI_CODING_AGENT_DIR: path.join(t.home, "pi"), PI_TELEMETRY: "0", PI_SKIP_VERSION_CHECK: "1", PI_OFFLINE: "1" },
+		stdio: ["pipe", "ignore", "ignore"],
+	});
+	const lines = () => (fs.existsSync(out) ? fs.readFileSync(out, "utf8").trim().split("\n").map((l) => JSON.parse(l)) : []);
+	try {
+		await until(() => lines().some((l) => l.mark === "done"), 60_000);
+	} finally {
+		p.stdin!.end();
+		p.kill();
+	}
+	const seen = lines();
+	const at = (mark: string) => seen.findIndex((l) => l.mark === mark);
+	assert.deepEqual(
+		seen.filter((l) => l.type),
+		[
+			{ type: "ui_prompt_start", reason: "ui_prompt", kind: "select", title: "First?" },
+			{ type: "ui_prompt_end", reason: "ui_prompt", kind: "select", title: "First?" },
+		],
+		"one span, named by its first dialog, for both",
+	);
+	const end = seen.findIndex((l) => l.type === "ui_prompt_end");
+	assert.ok(seen.findIndex((l) => l.type === "ui_prompt_start") < at("both open") && at("first closed") < end && end < at("done"), JSON.stringify(seen));
+	assert.deepEqual([seen[at("first closed")].answer, seen[at("second closed")].answer], [null, false], "closed by the abort: no answer");
+});
+
+test("pi: -ne turns its built-in extensions off, MCP the witness (safe mode leaves them out: pi offers no way to pick among them)", async () => {
+	const commands = (args: string[]) => {
+		const r = spawnSync(process.execPath, [piCli(), ...args, "--no-session", "--mode", "rpc"], {
+			cwd: folder("plain"),
+			env: { ...t.env, PI_CODING_AGENT_DIR: path.join(t.home, "pi"), PI_TELEMETRY: "0", PI_SKIP_VERSION_CHECK: "1", PI_OFFLINE: "1" },
+			input: `${JSON.stringify({ type: "get_commands" })}\n`,
+			encoding: "utf8",
+			timeout: 60_000,
+		});
+		const answer = r.stdout.split("\n").map((l) => (l.startsWith("{") ? JSON.parse(l) : {})).find((m) => m.command === "get_commands");
+		assert.ok(answer?.success, `${r.stdout}${r.stderr}`);
+		return (answer.data.commands as { name: string }[]).map((c) => c.name);
+	};
+	assert.ok(commands([]).includes("mcp"), "the built-in MCP extension is on by itself");
+	assert.ok(!commands(["-ne"]).includes("mcp"), "-ne: off");
+});
+
+test("pi: --thinking takes exactly the levels the core knows (pi only warns on another one)", () => {
+	const r = dry(folder("plain"), ["-ne", "--thinking", "not-a-level"]);
+	// Without pi's colours: node --test asks its children for them when it runs in a terminal.
+	const said = /Valid values: ([^\n]*)/.exec(`${r.stderr}${r.stdout}`.replace(/\x1b\[[0-9;]*m/g, ""))?.[1];
+	assert.equal(said?.trim(), THINKING.join(", "), `${r.stderr}${r.stdout}`);
+	assert.match(r.stdout, /"success"\s*:\s*true/, "a warning only: pi starts");
+});
+
+test("pi: the agent's session is resumed after a restart", async () => {
 	await t.cli("restart", "main");
 	assert.equal((await t.cli("send", "main", "again", "--wait", "--timeout", "60")).stdout.trim(), "echo: again");
 	assert.ok(t.model.requests.at(-1)!.users.includes("remember me"), "the earlier exchange is in the model's context");
@@ -242,6 +477,23 @@ test("Herdr Core: a program's OSC 7501 status shows in get (the runner reports f
 	assert.equal(t.hc("get", a.address).status.msg, "probe failed");
 	t.hc("kill", a.address);
 	t.hc("rm", a.address);
+});
+
+test("Herdr Core: when a terminal the agent started ends, what it types into the agent's terminal is one <hc>...</hc> block (never taken for the owner typing); with --no-notify it types nothing", async () => {
+	const P = t.portOf("main");
+	const from = port.end(P);
+	const settledAfter = (cursor: number) => t.waitEvent("main", cursor, (e) => e.type === "settled", 60_000);
+	assert.equal((await t.cli("send", "main", "tool: hc run --bg --name ctr-kid -- sh -c 'echo last words; exit 3'", "--wait", "--timeout", "60")).code, 0);
+	const typed = await t.waitEvent("main", from, (e) => e.type === "input", 60_000);
+	assert.match(String(typed.text), /^<hc>t\d+ ctr-kid exited \(exit 3\)\. Last lines:\nlast words\nRead: hc read t\d+<\/hc>$/);
+	assert.equal(hcNote(String(typed.text)), true, "the bridge's rule knows this shape");
+	await settledAfter(typed.cursor); // the note woke the agent: let it finish
+	// What the agent's instructions ask for: a helper started with --no-notify leaves no note.
+	const quiet = port.end(P);
+	assert.equal((await t.cli("send", "main", "tool: hc run --bg --no-notify --name ctr-quiet -- sh -c 'echo quiet; exit 3'", "--wait", "--timeout", "60")).code, 0);
+	await until(() => t.hc("get", "ctr-quiet").state === "finished");
+	await sleep(4000);
+	assert.equal(port.events(P, quiet).events.filter((e) => e.type === "input").length, 0);
 });
 
 test("Herdr Core: kill reaches the program as a signal the bridge can catch before it ends", async () => {

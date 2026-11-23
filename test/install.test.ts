@@ -32,7 +32,9 @@ test("install.sh, doctor, service, uninstall", async () => {
 	await p("start", "main");
 	assert.equal((await p("send", "main", "installed", "--wait", "--timeout", "30")).stdout.trim(), "echo: installed");
 	const doctor = await p("doctor").catch((e) => e);
-	assert.match(doctor.stdout, /ok\s+pi 1\.5\.2/);
+	// The pi that doctor names is the one package.json pins: read there, so that following pi changes one line.
+	const pinned: string = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).dependencies["@earendil-works/pi-coding-agent"];
+	assert.match(doctor.stdout, new RegExp(`ok\\s+pi ${pinned.replace(/\./g, "\\.")}\\s`));
 	assert.match(doctor.stdout, /ok\s+Herdr Core/);
 	assert.match(doctor.stdout, /ok\s+agent main: model fake\/echo-1: credentials ready/);
 	const mac = process.platform === "darwin";

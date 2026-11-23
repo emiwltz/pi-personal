@@ -1,12 +1,13 @@
 // `pp setup` and `pp` alone, answered through standard input (no terminal): the machine is checked, the provider pi
 // is already connected to is kept (pi's own screen is not opened), a first agent is created with pi's model, started,
-// and says hello.
+// and says hello; and, at a terminal, the menu of what can be changed once everything is set up.
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { after, before, test } from "node:test";
-import { type Env, ROOT, setup } from "./helpers.ts";
+import * as port from "../core/port.ts";
+import { type Env, ROOT, setup, sleep } from "./helpers.ts";
 
 let t: Env;
 before(async () => {
@@ -51,6 +52,7 @@ test("pp setup: keeps the connected provider, creates main with pi's model, star
 	assert.match(r.out, /◆ {2}Reach it {2}4\/5[\s\S]*Talk to main from Telegram\?[\s\S]*◆ {2}Stay alive {2}5\/5/);
 	assert.match(r.out, /main created in \S+, with fake\/echo-1/);
 	assert.match(r.out, /main › echo: Hello! I have just set you up/);
+	assert.match(t.model.requests.find((q) => /just set you up/.test(q.raw))!.raw, /^From: the owner, "[^"\n]+" \(pp chat\) · cli\nSent: /, "the hello is the owner's, as pp chat is");
 	assert.match(r.out, /Open it: +pp /);
 	assert.doesNotMatch(r.out, /pp chat/, "pp, then Enter: the one way to talk to it");
 	assert.ok(fs.existsSync(path.join(t.dir, "home", "agents", "main")), "the agent's record is in the private area");
@@ -88,4 +90,40 @@ test("pp setup with no provider connected, outside a terminal: says so and how t
 	assert.match(r.out, /No provider connected\. Later: pp setup/);
 	assert.match(r.out, /◇ {2}no model yet/);
 	assert.doesNotMatch(r.out, /Name your agent/);
+});
+
+test("pp setup's menu, at a terminal: a new model restarts the agent's terminal with it, as pp model does", async () => {
+	const file = path.join(t.home, "pi", "models.json");
+	const conf = JSON.parse(fs.readFileSync(file, "utf8"));
+	conf.providers.fake.models.push({ id: "echo-2", name: "Fake 2", contextWindow: 32000, maxTokens: 2000 }); // one more to choose
+	fs.writeFileSync(file, JSON.stringify(conf));
+	const from = port.end(t.portOf("main"));
+	const term = t.hc("run", "--bg", "--no-parent", "--no-notify", "--cwd", t.env.HOME!, "--", "env", `HOME=${t.env.HOME}`, process.execPath, path.join(ROOT, "core", "cli.ts"), "setup");
+	const shown = () => execFileSync("hc", ["read", term.address, "--lines", "300"], { env: t.env, encoding: "utf8" });
+	const until = async (re: RegExp) => {
+		for (const end = Date.now() + 90_000; !re.test(shown()); await sleep(200)) if (Date.now() > end) throw new Error(`timed out waiting for ${re}; the screen:\n${shown()}`);
+	};
+	const keys = async (...k: string[]) => {
+		for (const x of k) t.hc("keys", term.address, x);
+		await sleep(300);
+	};
+	try {
+		await until(/What would you like to change\?/);
+		await keys("down", "enter"); // its model
+		await until(/Use it\?/);
+		await keys("enter"); // the provider connected
+		await until(/Use this model\?/);
+		await keys("down", "enter"); // another one
+		await until(/Which model\?[\s\S]*fake\/echo-2/);
+		const list = shown().slice(shown().lastIndexOf("Which model?"));
+		await keys(...(list.indexOf("fake/echo-2") > list.indexOf("fake/echo-1") ? ["down"] : []), "enter");
+		await until(/main runs with fake\/echo-2/);
+	} finally {
+		t.hc("kill", term.address);
+	}
+	assert.equal(JSON.parse(fs.readFileSync(path.join(t.env.HOME ?? "", "pi-personal", "main", "pi-personal.json"), "utf8")).model, "fake/echo-2");
+	assert.ok(port.events(t.portOf("main"), from).events.some((e) => e.type === "restarted" && e.reason === "model set to fake/echo-2"), "the agent's terminal restarted to apply it");
+	const r = await t.cli("send", "main", "which model now?", "--wait", "--timeout", "60");
+	assert.equal(r.stdout.trim(), "echo: which model now?", r.stderr);
+	assert.equal(t.model.requests.at(-1)!.model, "echo-2");
 });

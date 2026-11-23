@@ -265,7 +265,7 @@ export async function doctor(): Promise<Check[]> {
 		}
 		try {
 			const s = control.status(name);
-			if (s.safeMode) add(false, `agent ${name}: safe mode`, `running without its extensions: ${s.safeMode.reason}`);
+			if (s.safeMode) add(false, `agent ${name}: safe mode`, `running with extensions off: ${s.safeMode.reason}`);
 			if (s.failed) add(false, `agent ${name}: failed`, s.failed.reason);
 		} catch (err) {
 			add(false, `agent ${name}: status`, (err as Error).message);

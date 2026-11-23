@@ -1,6 +1,6 @@
 // Edge cases found by adversarial reviews: who a reply goes to after a stop and a crash; silence after a stop or an
 // empty run; an extension stuck in a loop; bursts; fairness; a lock shared with another Herdr Core; settings edits
-// that lose nothing; a full disk; text typed in the terminal; extension checks; the sender line.
+// that lose nothing; a full disk; text typed in the terminal; extension checks; the sender line (more in sender.test.ts).
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import * as fs from "node:fs";
@@ -397,6 +397,24 @@ test("an id sent again after its taken/ file was cleaned up is a duplicate, not 
 	assert.ok(!all.some((e) => e.type === "taken" && e.id === "nightly-1"));
 });
 
+test("a resend whose file reads as older than the first being stored is a duplicate while the first is in taken/, not the copy a crash left", async () => {
+	assert.equal((await t.cli("send", "main", "coarse", "--id", "coarse-1", "--wait", "--timeout", "30")).code, 0);
+	await until(() => fs.existsSync(path.join(P(), "taken", "coarse-1.json")), 10_000, "its file in taken/");
+	const from = port.end(P());
+	// Linked by a channel that does not look first. The kernel's file clock, coarser than the bridge's, can date a resend
+	// written a few ms after the first was stored before it; here it is dated a minute before, to be sure.
+	const tmp = path.join(P(), "inbox", ".coarse-1.tmp");
+	fs.writeFileSync(tmp, JSON.stringify({ id: "coarse-1", text: "coarse", conversation: "cli" }));
+	const before = new Date(Date.now() - 60_000);
+	fs.utimesSync(tmp, before, before);
+	fs.linkSync(tmp, path.join(P(), "inbox", "coarse-1.json"));
+	fs.rmSync(tmp);
+	await t.waitEvent("main", from, (e) => e.type === "duplicate" && e.id === "coarse-1", 10_000);
+	await sleep(1500);
+	assert.ok(!evs("main", from).some((e) => e.type === "taken" && e.id === "coarse-1"), "never taken a second time");
+	assert.ok(!fs.existsSync(path.join(P(), "inbox", "coarse-1.json")));
+});
+
 test("a passing provider error that pi retries by itself is not told to the sender: only the answer arrives", async () => {
 	const from = port.end(P());
 	const n = tg.sent.length;
@@ -438,13 +456,14 @@ test("a lock whose pid now belongs to another agent's runner (after a reboot) do
 
 // ---- after the final judge ---------------------------------------------------------------------------------------
 
-test("the agent sees who wrote: the Telegram channel starts its text with a From line (name, id, conversation); the core adds nothing", async () => {
+test("the agent sees who wrote: the Telegram channel names the sender, and the bridge writes the From line (name, id, conversation) above the text; a message from a program has none", async () => {
 	const u = dm(BOB, "who am I?");
 	await until(() => evs("main").some((e) => e.type === "settled" && has(e, `tg-${u}`)), 30_000, "Bob's message to settle");
 	const asked = t.model.requests.filter((r) => /who am I\?/.test(r.raw)).at(-1)!;
-	assert.match(asked.raw, /^From: "Bob" \(Telegram user 1002\) · telegram:1002\n\nwho am I\?/); // written by the channel, not the core
+	assert.match(asked.raw, /^From: "Bob" \(Telegram user 1002\) · telegram:1002\nSent: [^\n]+\n\nwho am I\?$/); // written by the core, from what the channel said
+	assert.equal(JSON.parse(fs.readFileSync(path.join(P(), "taken", `tg-${u}.json`), "utf8")).text, "who am I?", "the channel writes no From line of its own");
 	assert.equal((await t.cli("send", "main", "plain line", "--wait", "--timeout", "30")).stdout.trim(), "echo: plain line");
-	assert.equal(t.model.requests.filter((r) => /plain line/.test(r.raw)).at(-1)!.raw, "plain line");
+	assert.match(t.model.requests.filter((r) => /plain line/.test(r.raw)).at(-1)!.raw, /^Sent: [^\n]+\n\nplain line$/);
 	assert.match(fs.readFileSync(path.join(folder("main"), "AGENTS.md"), "utf8"), /Several people may write to you/);
 });
 

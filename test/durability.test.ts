@@ -43,7 +43,8 @@ after(async () => {
 	await t.close();
 });
 
-test("an events file that cannot be written does not kill pi; the events come once it can", async () => {
+test("an events file that cannot be written does not kill pi; the events come once it can", async (ctx) => {
+	if (process.getuid?.() === 0) return ctx.skip("root can write anywhere");
 	const pid = piPid();
 	assert.ok(pid > 1 && alive(pid));
 	const startsBefore = all().filter((e) => e.type === "started" || e.type === "restarted").length;
