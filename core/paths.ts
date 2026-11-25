@@ -105,6 +105,9 @@ export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 
 /** This Pi-Personal's version, from its package.json. */
 export const version = (): string => JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).version;
+/** The GitHub repository it comes from and updates from ("owner/name"), from its package.json. */
+export const repository = (): string =>
+	/github\.com\/([^/]+\/[^/.]+)/.exec(JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).repository?.url ?? "")?.[1] ?? "emiwltz/pi-personal";
 
 /** Agent names become terminal names in Herdr Core, `pi-personal-<name>` and `pi-personal-<name>_<channel>`, which Herdr keeps
  * to 32 characters: with channel names of up to 9, an agent name gets what is left. */

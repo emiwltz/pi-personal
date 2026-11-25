@@ -10,9 +10,9 @@ import * as agents from "./agents.ts";
 import * as control from "./control.ts";
 import * as herdr from "./herdr.ts";
 import { COMMAND, ENV, PRODUCT, SLUG } from "./name.ts";
-import { ago, defaultFolderParent, home, piDir, privateDir, ROOT, tilde, version } from "./paths.ts";
+import { ago, defaultFolderParent, home, piDir, privateDir, repository, ROOT, tilde, version } from "./paths.ts";
 import * as port from "./port.ts";
-import { channelProgram, checkExtension, checkModel, dryStart, extensionPath, extensionsDir, foundExtensions, kitProgram, lockFile, lockHolder, piCli, piPackage, runForever } from "./runner.ts";
+import { channelProgram, checkExtension, checkModel, dryStart, extensionPath, foundExtensions, kitProgram, lockFile, lockHolder, piCli, piPackage, runForever } from "./runner.ts";
 
 const VERSION = version();
 
@@ -52,6 +52,12 @@ Manage
   new [agent]                     a fresh conversation (the old ones stay; pi's /resume lists them)
   model [agent] [provider/id]     the model it runs with; given one, it changes to it (its run goes on)
   thinking [agent] [level]        how much it thinks: ${agents.THINKING.join(", ")}
+  ext [agent]                     its extensions, packages and skills, on or off (pi loads them; ${COMMAND} shows them too)
+  ext on|off [agent] <name>       turn one on or off (from its next start: ${COMMAND} restart)
+  ext add [agent] <source> [--all]
+                                  add a pi package: npm:<name>, git:<repo>, a folder (--all: for every agent)
+  ext rm|update [agent] <name>    remove or update a package (update alone: all of them)
+  ext search <words...>           pi packages you could add, from pi's package gallery
   login [provider]                alone: pi's screen (/login, /model); with a provider: its sign-in (--api-key)
   models [search]                 the models you can use
   channel add|remove [agent] <channel>
@@ -72,7 +78,7 @@ Advanced
   secret set [agent] <key>        store a secret for its channels (typed or piped, never shown)
   kit [agent] <words...>          the kit's own commands, when a kit is installed with ${PRODUCT}
   remote <agent> -- <command...>  the commands a channel runs for its owner ("remote <agent> -- help" lists them)
-  ext check [agent] [extension]   its extensions (<folder>/.pi/extensions/) and whether pi loads them
+  ext check [agent] [extension]   whether pi loads its extensions, without starting it
   pi <args...>                    ${PRODUCT}'s own pi, with the settings all agents share
   send ... --conversation <c> --id <id> --timeout <s>
                                   send on behalf of a channel (the answer goes to that conversation)
@@ -647,7 +653,7 @@ function installedCopy(): string {
 async function update(json: boolean): Promise<number> {
 	const marker = installedCopy();
 	const command = fs.readFileSync(marker, "utf8").split("\n")[0].trim();
-	const repo = /github\.com\/([^/]+\/[^/.]+)/.exec(JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).repository?.url ?? "")?.[1] ?? "emiwltz/pi-personal";
+	const repo = repository();
 	const source = process.env[`${ENV}_SOURCE`];
 	const quote = (p: string) => `'${p.replace(/'/g, "'\\''")}'`;
 	const script =
@@ -982,26 +988,68 @@ async function main(argv: string[]): Promise<number> {
 			return spawnSync(p.command, [...p.args, ...words.slice(1), ...(rest ?? [])], { stdio: "inherit", cwd: p.cwd, env: p.env }).status ?? 1;
 		}
 		case "ext": {
-			// pi finds an agent's extensions in <folder>/.pi/extensions/<name>/: put one there to turn it on, take it out
-			// to turn it off. This only lists them and checks that pi loads them.
-			if (a !== "check") throw new UsageError(`usage: ${COMMAND} ext check [agent] [extension]. Extensions live in <agent folder>/.pi/extensions/<name>/`);
-			const [name, words] = agentAnd(pos.slice(2));
-			const agent = agents.load(name);
-			if (words[0]) {
-				const r = { name: words[0], ...checkExtension(agent, words[0]) };
-				out(json, [r], () => (r.ok ? `${r.name}: loads` : `${r.name}: FAILS: ${"error" in r ? r.error : ""}`));
-				return r.ok ? 0 : 1;
+			// What pi loads for an agent: the extensions in its folder (.pi/extensions/), the packages and skills of its
+			// settings and of every agent's. Turned on or off as `pi config` does; packages added, removed and updated by
+			// pi's own commands (extensions.ts). The home screen runs these.
+			const ext = await import("./extensions.ts");
+			const verbs = ["list", "on", "off", "add", "rm", "update", "search", "check"];
+			const verb = a && verbs.includes(a) ? a : "list";
+			if (verb === "search") {
+				const found = await ext.search(need(pos.slice(2).join(" "), "words to search for"));
+				out(json, found, () => found.map((f) => `npm:${f.name}  ${f.version}  ${f.description}`).join("\n") || "nothing found");
+				return 0;
 			}
-			const rows = foundExtensions(agent).map((name) => ({ name, path: extensionPath(agent, name) }));
-			const d = dryStart(agent, { all: true }); // everything pi would load for this agent
-			out(json, { extensions: rows, ...d }, () =>
-				[
-					...(rows.length ? rows.map((r) => `${r.name}  ${tilde(r.path)}`) : [`no extensions in ${tilde(extensionsDir(agent))}`]),
-					d.ok ? "pi starts fine with all of them" : `pi does not start: ${d.failing.length ? `failing: ${d.failing.join(", ")}` : d.error}`,
-					"(pi also loads the packages and MCP servers of its settings: docs/concepts.md)",
-				].join("\n"),
-			);
-			return d.ok ? 0 : 1;
+			const [name, words] = agentAnd(pos.slice(verb === a ? 2 : 1));
+			const agent = agents.load(name);
+			if (verb === "check") {
+				if (words[0]) {
+					const r = { name: words[0], ...checkExtension(agent, words[0]) };
+					out(json, [r], () => (r.ok ? `${r.name}: loads` : `${r.name}: FAILS: ${"error" in r ? r.error : ""}`));
+					return r.ok ? 0 : 1;
+				}
+				const rows = foundExtensions(agent).map((x) => ({ name: x, path: extensionPath(agent, x) }));
+				const d = dryStart(agent, { all: true }); // everything pi would load for this agent
+				out(json, { extensions: rows, ...d }, () =>
+					[...rows.map((r) => `${r.name}  ${tilde(r.path)}`), d.ok ? "pi starts fine with all of them" : `pi does not start: ${d.failing.length ? `failing: ${d.failing.join(", ")}` : d.error}`].join("\n"),
+				);
+				return d.ok ? 0 : 1;
+			}
+			const all = await ext.list(agent);
+			const one = () => {
+				const x = all.find((y) => y.name === words[0]);
+				if (!x) throw new UsageError(`${name} has no extension "${words[0] ?? ""}": ${COMMAND} ext ${name} lists them`);
+				return x;
+			};
+			const applies = `${name} takes it at its next start (${COMMAND} restart ${name})`;
+			// Through a pipe (the home screen), pi's own lines are kept, and said only when it failed.
+			const done = (r: { ok: boolean; said: string }, what: string) => {
+				if (!r.ok) throw new Error(r.said.split("\n").pop() || `pi could not do it`);
+				console.log(`${what}; ${applies}`);
+				return 0;
+			};
+			const quiet = !process.stdout.isTTY;
+			switch (verb) {
+				case "list":
+					out(json, all.map(({ resources, ...x }) => x), () => all.map((x) => `${x.on ? "on " : "off"}  ${x.name}${x.version ? ` ${x.version}` : ""}  ${x.kind}${x.every ? ", every agent" : ""}`).join("\n") || `none yet: ${COMMAND} ext add ${name} npm:<package>, or ${COMMAND} ext search <words>`);
+					return 0;
+				case "on":
+				case "off": {
+					const x = one();
+					await ext.setOn(agent, x, verb === "on");
+					console.log(`${x.name} is ${verb} for ${x.every ? "every agent" : name}; ${applies}`);
+					return 0;
+				}
+				case "add":
+					return done(await ext.add(agent, need(words[0], "what to add: npm:<package>, git:<repo> or a folder"), !!opt.all, quiet), `added ${words[0]} for ${opt.all ? "every agent" : name}`);
+				case "rm": {
+					const x = one();
+					if (x.kind !== "package") throw new UsageError(`${x.name} is not a package but a${x.kind === "skill" ? " skill" : "n extension"} of ${tilde(x.path)}: delete it there, or turn it off`);
+					return done(await ext.remove(agent, x, quiet), `removed ${x.name}`);
+				}
+				case "update":
+					return done(await ext.update(agent, words[0] ? one() : undefined, quiet), `updated ${words[0] ?? "every package"}`);
+			}
+			throw new UsageError(`usage: ${COMMAND} ext [agent], ${COMMAND} ext on|off|rm|update [agent] <name>, ${COMMAND} ext add [agent] <source> [--all], ${COMMAND} ext search <words>`);
 		}
 		case "_run": {
 			const agent = agents.load(need(a, "agent name"));
