@@ -179,7 +179,7 @@ export function serviceInstalled(): boolean {
 
 // ---- doctor ---------------------------------------------------------------------------------------------------
 
-interface Check {
+export interface Check {
 	ok: boolean | "warn";
 	what: string;
 	detail?: string;
