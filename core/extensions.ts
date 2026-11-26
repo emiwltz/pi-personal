@@ -83,11 +83,11 @@ export async function list(agent: AgentRecord): Promise<Extension[]> {
 
 /**
  * Turn it on or off where it is set: this agent's folder, or every agent. As `pi config` does: "-<path>" in the list of
- * its kind (in a package's filter, for a package's), which pi reads as "not this one"; on again, that entry goes.
+ * its kind (in a package's filter, for a package's), which pi reads as "not this one", or "+<path>", "this one too".
  */
 export async function setOn(agent: AgentRecord, x: Extension, on: boolean): Promise<void> {
 	const { settings } = await pi(agent);
-	const flip = (entries: string[] = [], pattern: string) => [...entries.filter((e) => e.replace(/^[!+-]/, "") !== pattern), ...(on ? [] : [`-${pattern}`])];
+	const flip = (entries: string[] = [], pattern: string) => [...entries.filter((e) => e.replace(/^[!+-]/, "") !== pattern), `${on ? "+" : "-"}${pattern}`];
 	for (const r of x.resources) {
 		const project = r.metadata.scope === "project";
 		const current = project ? settings.getProjectSettings() : settings.getGlobalSettings();
@@ -102,9 +102,8 @@ export async function setOn(agent: AgentRecord, x: Extension, on: boolean): Prom
 		if (i < 0) continue;
 		const pkg = typeof all[i] === "string" ? { source: all[i] } : { ...all[i] };
 		const entries = flip(pkg[r.type], path.relative(r.metadata.baseDir ?? path.dirname(r.path), r.path));
-		if (entries.length) pkg[r.type] = entries;
-		else delete pkg[r.type];
-		all[i] = Object.keys(pkg).length > 1 ? pkg : pkg.source; // no filter left: the plain source, as pi writes it
+		pkg[r.type] = entries;
+		all[i] = pkg;
 		project ? settings.setProjectPackages(all) : settings.setPackages(all);
 	}
 	await settings.flush();

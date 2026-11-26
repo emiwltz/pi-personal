@@ -130,7 +130,7 @@ interface Pane {
 	draw(w: number, h: number, t: number): string[];
 	keys(): [string, string][];
 	key(k: string): Act | undefined;
-	window?(): string[] | undefined; // a window it shows over itself (the line that adds an extension)
+	window?(w: number): string[] | undefined; // a window it shows over itself, at most `w` wide (the line that adds an extension)
 }
 interface Ctx {
 	l: screen.Look;
@@ -251,7 +251,7 @@ export function picture(l: screen.Look, version: string, snap: Snapshot, at: num
 		const w = Math.min(44, columns - 6);
 		const lines: string[] = [];
 		items.forEach((it) => {
-			if (it.gap) lines.push(screen.line(l, `    ${"─".repeat(w)}`));
+			if (it.gap) lines.push(screen.line(l, `    ${"─".repeat(Math.max(0, w))}`));
 			const key = it.key === "enter" ? "⏎" : it.key;
 			const label = it === on ? screen.bright(l, it.label, true) : screen.second(l, it.label);
 			const text = fit(`${label}${it.badge ? `  ${screen.faint(l, it.badge)}` : ""}`, w - 4, true);
@@ -392,9 +392,9 @@ function extPane(c: Ctx, name: string): Pane {
 			win
 				? [["type", "a source or words"], ["enter", win.found && win.input === win.searched ? "install" : "add or search"], ["↑↓", "a result"], ["tab", "this agent / every agent"], ["esc", "cancel"]]
 				: [["space", "on / off"], ["+", "add"], ["u", "update"], ["d", "remove"], ["/", "search"], ["esc", "back"]],
-		window: () => {
+		window: (most) => {
 			if (!win) return undefined;
-			const w = 66;
+			const w = Math.min(66, most);
 			const lines = [screen.faint(l, " npm:<name>, git:<repo>, a folder: added as it is."), screen.faint(l, " Other words: a search in pi's package gallery."), "", ` ${screen.yours(l, "›")} ${win.input}${screen.yours(l, "▏")}`, ""];
 			if (typeof win.found === "string") lines.push(screen.second(l, ` ${win.found}`));
 			else for (const [k, f] of (win.found ?? []).slice(0, 6).entries()) lines.push(`${k === win.j ? screen.yours(l, " › ") : "   "}${fit(f.name, 24, true)} ${screen.faint(l, fit(f.description, w - 32))}`);
@@ -448,7 +448,7 @@ function extPane(c: Ctx, name: string): Pane {
 				const turn = { work: `turning ${x.name} ${x.on ? "off" : "on"}`, pp: ["ext", x.on ? "off" : "on", name, x.name], then: done };
 				if (!x.on) return turn;
 				return { ask: [`Turn ${x.name} off for ${where(x)}?`, screen.second(l, "It stays installed: space turns it on again.")], yes: () => turn };
-			} else if (k === "u" && x.kind === "package") return { work: `updating ${x.name}`, pp: ["ext", "update", name, x.name], then: done };
+			} else if (k === "u" && x.kind === "package") return { ask: [`Update ${x.name}?`, screen.second(l, "Its new version runs with your rights, as this one does.")], yes: () => ({ work: `updating ${x.name}`, pp: ["ext", "update", name, x.name], then: done }) };
 			else if (k === "d" && x.kind === "package") return { ask: [`Remove ${x.name} from ${where(x)}?`, screen.second(l, "Its files go; add it again any time.")], yes: () => ({ work: `removing ${x.name}`, pp: ["ext", "rm", name, x.name], then: done }) };
 			return "done";
 		},
@@ -471,8 +471,11 @@ function tail(file: string, n: number): string[] {
 		if (tails.get(file)?.key !== key) {
 			const fd = fs.openSync(file, "r");
 			const buf = Buffer.alloc(Math.min(st.size, 64 * 1024));
-			fs.readSync(fd, buf, 0, buf.length, st.size - buf.length);
-			fs.closeSync(fd);
+			try {
+				fs.readSync(fd, buf, 0, buf.length, st.size - buf.length);
+			} finally {
+				fs.closeSync(fd);
+			}
 			tails.set(file, { key, lines: buf.toString("utf8").trimEnd().split("\n") });
 		}
 		return tails.get(file)?.lines.slice(-n) ?? [];
@@ -569,11 +572,11 @@ function doctorPane(c: Ctx, name: string): Pane {
 		});
 	};
 	run();
-	/** Where a problem is fixed: the screen that changes what it is about. */
-	const fix = (ch: Check): Act | undefined => {
+	/** Where a problem is fixed: the screen that changes what it is about, opened only on Enter (some start pi). */
+	const fix = (ch: Check): (() => Pane) | undefined => {
 		const m = /^agent (\S+): (extension|safe mode|model|channel)/.exec(ch.what);
-		if (m) return { open: m[2] === "model" ? modelPane(c, m[1]) : m[2] === "channel" ? settingsPane(c, m[1]) : extPane(c, m[1]) };
-		if (ch.topic === "Coming back by itself") return { open: settingsPane(c, name) };
+		if (m) return () => (m[2] === "model" ? modelPane(c, m[1]) : m[2] === "channel" ? settingsPane(c, m[1]) : extPane(c, m[1]));
+		if (ch.topic === "Coming back by itself") return () => settingsPane(c, name);
 	};
 	return {
 		title: "Check everything",
@@ -596,7 +599,10 @@ function doctorPane(c: Ctx, name: string): Pane {
 		keys: () => [["↑↓", "move"], ["enter", "fix it"], ["c", "check again"], ["esc", "back"]],
 		key: (k) => {
 			if (typeof checks === "string") return k === "esc" ? undefined : "done";
-			if (k === "enter") return fix(checks[i]) ?? "done";
+			if (k === "enter") {
+				const open = fix(checks[i]);
+				return open ? { open: open() } : "done";
+			}
 			if (k === "c") run();
 			else if (k === "up" || k === "down" || k === "j" || k === "k") i = move(k, i, checks.length);
 			else return undefined;
@@ -765,7 +771,7 @@ async function loop(version: string): Promise<number> {
 					while (lines.length < rows - 4) lines.push("");
 					lines.push("", note ? `  ${fit(note, columns - 3)}` : "", keyLine(l, top.keys(), columns));
 				}
-				const win = top?.window?.();
+				const win = top?.window?.(columns - 2);
 				if (win) lines = screen.over(l, lines, win, columns);
 				if (asking) lines = screen.over(l, lines, screen.frame(l, "", Math.min(64, columns - 4), asking.lines.length + 5, ["", ...asking.lines.map((s) => ` ${s}`), "", ` ${screen.yours(l, "y", true)} ${screen.second(l, "yes")}   ${screen.yours(l, "esc", true)} ${screen.second(l, "no")}`], true), columns);
 				if (busy) lines = screen.over(l, lines, screen.frame(l, "", Math.min(64, columns - 4), 3, [` ${screen.lighting(l, Date.now() - busy.since)} ${busy.text}…`], true), columns);

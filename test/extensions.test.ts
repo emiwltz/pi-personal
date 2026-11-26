@@ -12,7 +12,12 @@ const write = (file: string, text: string) => {
 	fs.mkdirSync(path.dirname(file), { recursive: true });
 	fs.writeFileSync(file, text);
 };
-const listed = async () => JSON.parse((await t.cli("ext", "main", "--json")).stdout).map((x: { name: string; kind: string; on: boolean }) => `${x.kind} ${x.name} ${x.on ? "on" : "off"}`);
+// Only what this test made: pi also lists the skills of the person's own ~/.agents/skills, for every agent.
+const ours = ["broken", "note", "demo-pkg"];
+const listed = async () =>
+	JSON.parse((await t.cli("ext", "main", "--json")).stdout)
+		.filter((x: { name: string }) => ours.includes(x.name))
+		.map((x: { name: string; kind: string; on: boolean }) => `${x.kind} ${x.name} ${x.on ? "on" : "off"}`);
 
 before(async () => {
 	t = await setup("ext");

@@ -150,8 +150,8 @@ export function frame(l: Look, title: string, w: number, h: number, lines: strin
 	const edge = (s: string) => (on ? yours(l, s) : line(l, s));
 	const head = title ? ` ${title} ` : "";
 	const top = `${edge("╭─")}${on ? yours(l, head, true) : second(l, head)}${edge(`${"─".repeat(Math.max(0, w - 3 - width(head)))}╮`)}`;
-	const inside = Array.from({ length: Math.max(0, h - 2) }, (_x, i) => `${edge("│")}${fit(lines[i] ?? "", w - 2, true)}${edge("│")}`);
-	return [top, ...inside, edge(`╰${"─".repeat(w - 2)}╯`)];
+	const inside = Array.from({ length: Math.max(0, h - 2) }, (_x, i) => `${edge("│")}${fit(lines[i] ?? "", Math.max(0, w - 2), true)}${edge("│")}`);
+	return [top, ...inside, edge(`╰${"─".repeat(Math.max(0, w - 2))}╯`)];
 }
 /** Blocks side by side, each as wide as its widest line. */
 export function beside(blocks: string[][], gap = 2): string[] {
