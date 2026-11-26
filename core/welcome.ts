@@ -472,6 +472,29 @@ async function stay(name: string): Promise<boolean> {
 	return on;
 }
 
+/** One part of the guide again, for one agent: its channels, its model (or the provider), or coming back by itself.
+ * The guide's menu runs it, and so does the home screen's Settings. */
+export async function change(what: "reach" | "model" | "stay", name: string): Promise<void> {
+	numbered = false;
+	try {
+		if (what === "reach") await reach(name);
+		if (what === "stay") await stay(name);
+		if (what === "model") {
+			const a = agents.load(name);
+			const m = await model(false, a.settings.model);
+			if (m.model && m.model !== a.settings.model) {
+				const chosen = m.model;
+				const r = await waiting(`Restarting ${name} with ${chosen}`, () => control.setting(name, "model", chosen));
+				if (r.later) ask.ok(`${name} is stopped: it runs with ${chosen} from its next start (${COMMAND} start ${name})`);
+				else if (r.ready === false) ask.fail(`${name} did not get ready: ${r.trouble}`);
+				else ask.ok(`${name} runs with ${chosen}`);
+			} else if (m.model) ask.ok(`${name} already runs with ${m.model}`);
+		}
+	} finally {
+		ask.margin("");
+	}
+}
+
 /** pp setup on a machine where everything is set up: a menu of what can be changed. undefined: the whole guide. */
 async function menu(): Promise<number | undefined> {
 	const names = agents.list();
@@ -489,19 +512,7 @@ async function menu(): Promise<number | undefined> {
 		]);
 		if (what === "quit") return 0;
 		if (what === "all") return undefined;
-		if (what === "reach") await reach(name);
-		if (what === "stay") await stay(name);
-		if (what === "model") {
-			const a = agents.load(name);
-			const m = await model(false, a.settings.model);
-			if (m.model && m.model !== a.settings.model) {
-				const chosen = m.model;
-				const r = await waiting(`Restarting ${name} with ${chosen}`, () => control.setting(name, "model", chosen));
-				if (r.later) ask.ok(`${name} is stopped: it runs with ${chosen} from its next start (${COMMAND} start ${name})`);
-				else if (r.ready === false) ask.fail(`${name} did not get ready: ${r.trouble}`);
-				else ask.ok(`${name} runs with ${chosen}`);
-			} else if (m.model) ask.ok(`${name} already runs with ${m.model}`);
-		}
+		await change(what, name);
 	}
 }
 
@@ -521,7 +532,6 @@ export async function setup(version: string): Promise<number> {
 	try {
 		// Everything set up already, at a terminal: what to change, rather than the whole guide again.
 		if (ask.interactive() && agents.list().length && (await herdr.isRunning())) {
-			numbered = false;
 			const done = await menu();
 			numbered = true;
 			if (done !== undefined) return done;

@@ -20,7 +20,7 @@ Your folder is your working directory: `pwd` shows it.
 | Your conversation | the session pi keeps for you | `pp new <agent>` starts a fresh one, which knows nothing of the old one (it stays on disk: pi's `/resume` lists it). Only on your owner's request: a message still waiting for its answer is told it will not get one. |
 | Your channels | `"channels"` in `pi-personal.json` | `pp channel add <agent> <channel>`, `pp channel remove <agent> <channel>`. Telegram's own setup asks for a token: your owner runs `pp setup` in a terminal. |
 | Who may write to you on Telegram | the channel's guest list | `pp channel <agent> telegram who` (who wrote without being allowed), `allow <id>`, `deny <id>`; `owner` shows who your owner is there (setting it is your owner's to do, at a terminal). |
-| Your extensions | `.pi/extensions/` in your folder | pi's own extension format. `pp ext check <agent>` says whether pi loads them; restart yourself to load them. |
+| Your extensions | `.pi/extensions/` in your folder, and pi packages | pi's own extension format. `pp ext <agent>` lists them, on or off; `pp ext add <agent> npm:<package>` adds one, `pp ext off <agent> <name>` turns one off; `pp ext check <agent>` says whether pi loads them. Restart yourself to load a change. |
 | Skills, prompt templates, packages, MCP servers | the way pi does it, in your folder's `.pi/` | `pp pi <args>` runs Pi-Personal's own pi (to install a package, for example). |
 | How you are doing | | `pp status <agent>`, `pp doctor`, `pp log <agent>`. |
 

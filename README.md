@@ -21,7 +21,8 @@ Pi-Personal gives you an agent of your own: a [pi](https://github.com/earendil-w
 
 - **One line to install.** A guide in five steps does the rest: Herdr Core (yours, if you have one), a model with pi's own sign-in, your agent, Telegram. About four minutes. [guide →](docs/guide.md)
 - **Always there.** It runs in the background, comes back by itself after a crash or a restart of the machine (the guide sets this up), and picks up the work that was cut off.
-- **Watch it, take over.** `pp` shows how it is doing; Enter opens its screen, which is all of pi; `ctrl+\` comes back, and it keeps working.
+- **Watch it, take over.** `pp` shows how it is doing, with a menu of everything: its status, its model, its extensions, its log, settings, checks, updates. Enter opens its screen, which is all of pi; `ctrl+\` comes back, and it keeps working.
+- **pi's extensions, from a menu.** Add a pi package from pi's gallery, turn an extension off or on, update or remove it: from `pp`, or with `pp ext`. It is pi's own mechanism, nothing on top.
 - **Reach it from anywhere.** Telegram is built in. Any other service is a small program, in any language. [write a channel →](docs/write-a-channel.md)
 - **Pilot it from the chat.** From Telegram, its owner stops a run, starts a fresh conversation, changes the model, gives it a key or answers its question; it sends files back. The terminal is never required. [Telegram →](channels/telegram/README.md)
 - **It sets itself up.** Ask it to change its model, its instructions or who may write to it: it knows how, and takes such requests from its owner only. [its manual →](docs/for-agents.md)
@@ -44,6 +45,7 @@ pp            # how your agent is doing, and a menu of everything: Enter opens i
 | `pp setup` | set things up, or change them: a channel, the model |
 | `pp status` | what it and its channels are doing, and why |
 | `pp doctor` | check everything, by topic, with what to do |
+| `pp ext` | its extensions, on or off; `pp ext add npm:<package>` adds one |
 | `pp update` | the newest Pi-Personal, with the pi it was tested with |
 | `pp help` | the rest (`pp help --all` lists every command) |
 
@@ -70,7 +72,7 @@ A message is never lost and never handled twice, a reply never goes to someone i
 
 ## Status
 
-Version 0.5, early. Its test suite passes on Linux (Node.js 22, pi 1.6.0, Herdr Core 0.1.18 and 0.1.21, a Raspberry Pi included), against a fake model and a fake Telegram; it passed on macOS too, before the last changes to the Telegram replies and to `pp`'s screen. It was used for real on a Raspberry Pi with a hosted model and Telegram, and an update from 0.4.1 was rehearsed: the agent kept its conversation, its settings and its channel. Not yet proven: weeks of continuous use, a power cut, a real fresh machine of every kind.
+Version 0.6, early. Its test suite passes on Linux (Node.js 22, pi 1.6.0, Herdr Core 0.1.18 and 0.1.21, a Raspberry Pi included) and on macOS (Herdr Core 0.1.22), against a fake model and a fake Telegram; on macOS with Herdr Core 0.1.22, one test of an extension that breaks pi's loading fails, as it does with 0.5. It is used for real on a Raspberry Pi with a hosted model and Telegram, and updates from 0.4.1 and 0.5.0 keep the agent's conversation, settings and channels. Not yet proven: weeks of continuous use, a power cut, a real fresh machine of every kind.
 
 Pi-Personal follows pi: a new pi is adopted once the tests pass with it, and `pp update` brings it.
 

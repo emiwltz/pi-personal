@@ -75,6 +75,7 @@ The fake model answers `echo: <text>` (the text without the header the bridge wr
 | `safe-mode.test.ts` | safe mode keeps what works: a healthy extension stays on (and is told who a run is for) beside a broken one, one turned off in pi's settings stays off, a set that fails for real falls back to the bridge alone without `failed`, what fails named again on the bridge alone, an extension removed meanwhile, leaving safe mode by itself, the tools turned off coming back |
 | `durability.test.ts`, `edge-cases.test.ts`, `regressions.test.ts` | full disks, bursts, races, and every defect found so far |
 | `settings.test.ts`, `cli.test.ts`, `install.test.ts` | settings, the command line, install and uninstall |
+| `extensions.test.ts` | `pp ext`: what pi loads for an agent, an extension turned off (pi loads it no more) and on again, a local package added, listed, turned off and removed with pi's own commands |
 | `screen.test.ts`, `home.test.ts` | the drawing (as text: colours, contrast, the mark, the opening); `pp`'s screen and its menu, opening the agent and coming back, its status page |
 | `setup.test.ts`, `upkeep.test.ts` | `pp setup` answered on standard input, and its menu at a terminal; doctor, the help, coming back after a restart of the machine |
 | `session.test.ts` | the agent's own session: pinned by its id, never taken by another pi; an agent made by 0.4 keeps its conversation; `pp new` (during a run, with pi down, while stopped), `pp model` during a run or with a stop meanwhile, `pp thinking` |

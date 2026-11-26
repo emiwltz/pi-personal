@@ -63,12 +63,13 @@ test("pi's shared key settings are written once; a person's file, or one pi cann
 	fs.writeFileSync(file, JSON.stringify({ "app.clear": [], "app.exit": [], "app.suspend": [] }));
 });
 
-test("pp in a terminal: the agent and a menu of what can be done; Enter opens its screen, ctrl+\\ comes back, s shows its status, Escape leaves", { skip: process.platform !== "linux" && "script(1) is driven this way on Linux" }, async () => {
+test("pp in a terminal: the agent and a menu of what can be done; Enter opens its screen, ctrl+\\ comes back, a letter opens its screen and Esc comes back, Escape leaves", { skip: process.platform !== "linux" && "script(1) is driven this way on Linux" }, async () => {
 	const term = spawn("script", ["-qfec", `stty cols 90 rows 30; '${process.execPath}' '${path.join(ROOT, "core", "cli.ts")}'`, "/dev/null"], { env: t.env, stdio: ["pipe", "pipe", "pipe"] });
 	let screen = "";
 	term.stdout!.on("data", (d) => (screen += d.toString()));
 	const see = async (re: RegExp, from = 0, ms = 30_000) => {
-		for (const end = Date.now() + ms; !re.test(screen.slice(from)); await sleep(100)) if (Date.now() > end) throw new Error(`not seen: ${re}\n--- screen ---\n${screen.slice(from)}`);
+		const shown = () => screen.slice(from).replace(/\x1b\[[0-9;?]*[A-Za-z]/g, ""); // the words, without their colours
+		for (const end = Date.now() + ms; !re.test(shown()); await sleep(100)) if (Date.now() > end) throw new Error(`not seen: ${re}\n--- screen ---\n${shown()}`);
 	};
 	const exited = new Promise<number | null>((r) => term.on("exit", r));
 	try {
@@ -83,13 +84,15 @@ test("pp in a terminal: the agent and a menu of what can be done; Enter opens it
 		mark = screen.length;
 		term.stdin!.write("\x1c"); // ctrl+\
 		await see(/Open main/, mark);
-		mark = screen.length;
-		term.stdin!.write("s");
-		await see(/any key/, mark);
-		assert.match(screen.slice(mark), /main/);
-		mark = screen.length;
-		term.stdin!.write("x");
-		await see(/Open main/, mark);
+		// Each line of the menu opens its screen, over the home screen; Esc comes back.
+		for (const [key, seen] of [["s", /pp › Status[^]*Model {7}fake\/echo-1/], ["e", /pp › Extensions[^]*what main can do/], ["l", /pp › Its log[^]*main's log/], ["m", /pp › Model and thinking[^]*echo-1/]] as const) {
+			mark = screen.length;
+			term.stdin!.write(key);
+			await see(seen, mark);
+			mark = screen.length;
+			term.stdin!.write("\x1b");
+			await see(/Open main/, mark);
+		}
 		term.stdin!.write("\x1b"); // Escape alone leaves, as q does
 		assert.equal(await Promise.race([exited, sleep(10_000).then(() => "still running")]), 0);
 		assert.match(screen, /\x1b\[\?1049l[^]*$/, "the normal screen is given back");

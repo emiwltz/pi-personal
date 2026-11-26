@@ -1,4 +1,4 @@
-// How Pi-Personal looks in a terminal, in one place: the colours, the four levels of text, the mark, the stars. The
+// How Pi-Personal looks in a terminal, in one place: the colours, the four levels of text, the mark, the stars, frames. The
 // guide and the home screen decide what to say; this file decides how it is drawn. Every drawing is a function of its
 // arguments (time, palette, colour depth) that returns lines of text, so a screen can be tested as text. No dependency.
 //
@@ -135,6 +135,41 @@ export const alive = (l: Look, s: string) => paint(l, s, l.palette.b);
 export const broken = (l: Look, s: string) => paint(l, s, l.palette.bad);
 /** What a line takes on the screen, colour codes left out. */
 export const width = (s: string) => [...s.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "")].length;
+const plain = (s: string) => [...s.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "")];
+/** A line cut to `w` columns, with … when cut (a cut line loses its colours), or spaces up to `w` when `pad`. */
+export function fit(s: string, w: number, pad = false): string {
+	s = s.replace(/[\r\n\t]+/g, " "); // one line, whatever an error message holds
+	const n = width(s);
+	if (n <= w) return pad ? s + " ".repeat(w - n) : s;
+	return `${plain(s).slice(0, Math.max(0, w - 1)).join("")}…`;
+}
+
+// ---- frames, side by side, a window over the rest -----------------------------------------------------------------------
+/** A frame of `w` by `h` with its title in the top edge; `on` draws it in the colour that says "this concerns you". */
+export function frame(l: Look, title: string, w: number, h: number, lines: string[], on = false): string[] {
+	const edge = (s: string) => (on ? yours(l, s) : line(l, s));
+	const head = title ? ` ${title} ` : "";
+	const top = `${edge("╭─")}${on ? yours(l, head, true) : second(l, head)}${edge(`${"─".repeat(Math.max(0, w - 3 - width(head)))}╮`)}`;
+	const inside = Array.from({ length: Math.max(0, h - 2) }, (_x, i) => `${edge("│")}${fit(lines[i] ?? "", Math.max(0, w - 2), true)}${edge("│")}`);
+	return [top, ...inside, edge(`╰${"─".repeat(Math.max(0, w - 2))}╯`)];
+}
+/** Blocks side by side, each as wide as its widest line. */
+export function beside(blocks: string[][], gap = 2): string[] {
+	const ws = blocks.map((b) => Math.max(0, ...b.map(width)));
+	return Array.from({ length: Math.max(...blocks.map((b) => b.length)) }, (_x, i) => blocks.map((b, j) => fit(b[i] ?? "", ws[j], j < blocks.length - 1)).join(" ".repeat(gap)).trimEnd());
+}
+/** A window in the middle of a picture, what is behind it dimmed: a question to answer, or work under way. */
+export function over(l: Look, picture: string[], win: string[], columns: number): string[] {
+	const w = Math.max(...win.map(width));
+	const col = Math.max(0, Math.floor((columns - w) / 2));
+	const top = Math.max(1, Math.floor((picture.length - win.length) / 2));
+	return picture.map((s, i) => {
+		const p = plain(s);
+		const ours = win[i - top];
+		if (ours === undefined) return line(l, p.join(""));
+		return line(l, fit(p.slice(0, col).join(""), col, true)) + ours + line(l, p.slice(col + w).join(""));
+	});
+}
 
 // ---- the mark: « Pp » in square strokes, described as rectangles, so it is drawn at the size the stage has ----------------------
 const BOX = 1.3; // the mark is 1.3 wide for 1 high
