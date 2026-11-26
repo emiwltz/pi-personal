@@ -72,7 +72,7 @@ A message is never lost and never handled twice, a reply never goes to someone i
 
 ## Status
 
-Version 0.5, early. Its test suite passes on Linux (Node.js 22, pi 1.6.0, Herdr Core 0.1.18 and 0.1.21, a Raspberry Pi included), against a fake model and a fake Telegram; it passed on macOS too, before the last changes to the Telegram replies and to `pp`'s screen. It was used for real on a Raspberry Pi with a hosted model and Telegram, and an update from 0.4.1 was rehearsed: the agent kept its conversation, its settings and its channel. Not yet proven: weeks of continuous use, a power cut, a real fresh machine of every kind.
+Version 0.6, early. Its test suite passes on Linux (Node.js 22, pi 1.6.0, Herdr Core 0.1.18 and 0.1.21, a Raspberry Pi included) and on macOS (Herdr Core 0.1.22), against a fake model and a fake Telegram; on macOS with Herdr Core 0.1.22, one test of an extension that breaks pi's loading fails, as it does with 0.5. It is used for real on a Raspberry Pi with a hosted model and Telegram, and updates from 0.4.1 and 0.5.0 keep the agent's conversation, settings and channels. Not yet proven: weeks of continuous use, a power cut, a real fresh machine of every kind.
 
 Pi-Personal follows pi: a new pi is adopted once the tests pass with it, and `pp update` brings it.
 
